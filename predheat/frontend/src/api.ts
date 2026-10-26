@@ -45,6 +45,56 @@ export interface Costs {
   reconciliation: { reconciled: boolean; worst_difference_kwh: number; slots: number };
 }
 
+export interface PlanAction {
+  kind: string;
+  label: string;
+  start: string;
+  end: string;
+  rate_p: number | null;
+  reason: string;
+  saving_p_per_kwh: number | null;
+}
+
+export interface NextAction {
+  kind: string;
+  label?: string;
+  start?: string;
+  end?: string;
+  rate_p?: number | null;
+  reason: string;
+  state?: "now" | "upcoming";
+}
+
+export interface ShadowPlan {
+  status: "indicative" | "not_available";
+  reason: string;
+  actions: PlanAction[];
+  next_action?: NextAction;
+  assumptions?: string[];
+  horizon_start?: string;
+  horizon_end?: string;
+}
+
+export interface HeatLoss {
+  status: "ok" | "insufficient_data" | "not_identified";
+  reason?: string;
+  samples: number;
+  window_start: string;
+  window_end: string;
+  heat_loss_w_per_k?: number;
+  ci_low_w_per_k?: number | null;
+  ci_high_w_per_k?: number | null;
+  design_kw_at_minus_2?: number;
+  capacity_kwh_per_k?: number | null;
+  time_constant_h?: number | null;
+  internal_gain_kw?: number | null;
+  confidence?: number;
+  survey_w_per_k?: number | null;
+  notes?: string[];
+}
+
+export const MODE_LABEL: Record<string, string> = { monitor: "Monitor mode", shadow: "Shadow mode", balanced: "Balanced", max_savings: "Max savings" };
+
 export interface Overview {
   generated_at: string;
   data_mode: string;
@@ -60,7 +110,9 @@ export interface Overview {
   tariff_code: string | null;
   import_rate_now_p: number | null;
   today: Costs;
-  next_action: { kind: string; reason: string };
+  plan: ShadowPlan;
+  next_action: NextAction;
+  heat_loss: HeatLoss;
 }
 
 export interface DailyRow {
@@ -79,7 +131,7 @@ export interface Timeline {
   slot_summary: Record<string, number>;
   weather: { valid_at: string; temperature_c: number; cloud_cover_pct: number | null }[];
   solar: { period_start: string; pv_kw: number; pv10_kw: number | null; pv90_kw: number | null }[];
-  optimisation: { status: string; reason: string };
+  optimisation: ShadowPlan;
 }
 
 export interface SystemHealth {
@@ -101,6 +153,7 @@ export const api = {
   costs: (days: number) => get<{ summary: Costs; daily: DailyRow[] }>(`/api/costs?days=${days}`),
   timeline: (hours = 48) => get<Timeline>(`/api/timeline?hours=${hours}`),
   system: () => get<SystemHealth>("/api/system"),
+  heatLoss: (days = 14) => get<HeatLoss>(`/api/heat-loss?days=${days}`),
 };
 
 export const pounds = (pence: number | null | undefined) =>

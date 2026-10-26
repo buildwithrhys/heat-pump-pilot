@@ -13,6 +13,11 @@
   --s4: #eda100; /* planned (assumed) */
   --s7: #6250d6; /* solar */
   --peak: #c3c2b7;
+  /* energy flow diagram, colour by source; validated for colour vision in both themes */
+  --flow-grid: #1971c2;
+  --flow-onsite: #d6336c;
+  --flow-air: #12b886;
+  --flow-hp: #f76707;
   --good: #006300;
   --warn: #9a6700;
   --bad: #b3261e;
@@ -38,6 +43,10 @@
     --s3: #199e70;
     --s4: #c98500;
     --s7: #9085e9;
+    --flow-grid: #3987e5;
+    --flow-onsite: #9c36b5;
+    --flow-air: #0ca678;
+    --flow-hp: #d9480f;
     --peak: #383835;
     --good: #0ca30c;
     --warn: #e0a200;
@@ -83,3 +92,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--axis); background: var(--surface); color: var(--ink); }
 .tablewrap { overflow-x: auto; }
 @media (max-width: 600px) { .card .big { font-size: 1.4rem; } .shell { padding: 12px; } }
+
+/* shadow plan action tags */
+.tag.heat_hot_water { background: color-mix(in srgb, var(--s2) 18%, transparent); color: var(--s2); }
+.tag.preheat_space { background: color-mix(in srgb, var(--s1) 18%, transparent); color: var(--s1); }
+.tag.coast_space { background: color-mix(in srgb, var(--s3) 18%, transparent); color: var(--s3); }
+.tag.run_normally { background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--ink-2); }

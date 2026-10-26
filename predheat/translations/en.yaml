@@ -1,0 +1,76 @@
+configuration:
+  data_mode:
+    name: Data source
+    description: >-
+      Where PredHeat gets its readings. "home_assistant" reads live data from this Home Assistant
+      instance through the Supervisor (heat pump, tariff, weather and solar integrations are
+      discovered automatically; see the System health tab for what was found). "simulated" runs a
+      synthetic house with known physics and a made-up Intelligent Go style tariff, which is useful
+      for exploring the dashboard before any real data has been collected. Nothing you set here can
+      control equipment.
+  operating_mode:
+    name: Operating mode
+    description: >-
+      "monitor" records and prices your energy use, learns the house's heat loss and shows what
+      PredHeat would do, but keeps nothing beyond the readings. "shadow" does the same and also saves
+      every 24-hour plan it produces, so the advice can later be scored against what actually
+      happened. Neither mode controls your heating. Active control does not exist in this release and
+      cannot be switched on from here.
+  poll_seconds:
+    name: Collection interval (seconds)
+    description: >-
+      How often PredHeat reads new values from Home Assistant, refreshes tariff prices and
+      forecasts, and updates the plan. 300 (five minutes) is a good default. Lower values give finer
+      detail but create more database rows; values above 900 may miss short heat pump cycles.
+  log_level:
+    name: Log level
+    description: >-
+      How much detail appears in the add-on's Log tab. "info" is normal. Use "debug" if something is
+      not working and you want to see every request to Home Assistant, then set it back, as debug
+      logs are large.
+  latitude:
+    name: Latitude (optional)
+    description: >-
+      Decimal degrees, for example 51.48. Only needed if you want PredHeat to use a different
+      location from the one set in Home Assistant, for example for solar geometry. Leave empty to
+      use the Home Assistant home location.
+  longitude:
+    name: Longitude (optional)
+    description: >-
+      Decimal degrees, for example -3.18. Leave empty to use the Home Assistant home location.
+  octopus_api_key:
+    name: Octopus Energy API key (optional)
+    description: >-
+      Not needed today. PredHeat reads tariff prices and Intelligent Octopus dispatches from the
+      Home Assistant Octopus Energy integration. A direct API key is reserved for future phases that
+      will read your account without going through Home Assistant. Stored only in the add-on's own
+      configuration.
+  octopus_account:
+    name: Octopus Energy account number (optional)
+    description: >-
+      Your account number, in the form A-AAAA1111. Only used together with the API key above.
+  openweather_api_key:
+    name: OpenWeather API key (optional)
+    description: >-
+      Not needed today. Weather forecasts come from the Home Assistant OpenWeatherMap integration.
+      Reserved for future direct access.
+  solcast_api_key:
+    name: Solcast API key (optional)
+    description: >-
+      Not needed today. Solar forecasts come from the Home Assistant Solcast integration. Reserved
+      for future direct access.
+  sim_days:
+    name: Simulated history (days)
+    description: >-
+      Only used when the data source is "simulated". How many days of synthetic history to generate
+      on first start. More days give the heat loss estimate more to learn from.
+  sim_seed:
+    name: Simulation seed
+    description: >-
+      Only used when the data source is "simulated". Any whole number. The same seed always produces
+      the same synthetic weather and heating pattern, so results are repeatable.
+network:
+  8750/tcp: >-
+    Optional direct access to the PredHeat dashboard and API from your network, without going
+    through Home Assistant ingress. Leave disabled unless you need it; the sidebar panel works
+    without it.

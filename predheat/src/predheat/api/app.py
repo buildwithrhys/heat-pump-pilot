@@ -97,6 +97,15 @@ def create_app(settings: Settings | None = None, platform: Platform | None = Non
     async def timeline(hours: int = Query(48, ge=1, le=168)):
         return plat().timeline(hours)
 
+    @app.get("/api/heat-loss")
+    async def heat_loss(days: int = Query(14, ge=1, le=90)):
+        """Fitted building heat loss (W/K) from recent history. Read-only."""
+        p = plat()
+        from ..db import session_scope
+
+        with session_scope(p.settings.database_url) as s:
+            return p.thermal_estimate(s, days=days)
+
     @app.post("/api/poll")
     async def poll():
         """Trigger a collection cycle (read-only against equipment)."""

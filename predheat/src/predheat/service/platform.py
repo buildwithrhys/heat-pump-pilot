@@ -7,18 +7,21 @@ read-only with respect to equipment in every mode.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from ..analytics import allocate_heat_pump_categories, counter_to_intervals, reconcile
-from ..config import DataMode, Settings, get_settings
+from ..config import DataMode, OperatingMode, Settings, get_settings
 from ..db import init_db, session_scope
 from ..db import models as m
 from ..db.session import as_utc
 from ..domain import CapabilityReport, Measurement, Provenance, Quality, RateInterval, Signal
 from ..integrations.base import ProviderHealth
-from ..pricing import PriceClass, build_rate_book, classify_slots, standing_charge_for_period
+from ..model import fit_rc_model, survey_to_coefficient
+from ..optimiser import build_shadow_plan
+from ..pricing import PriceClass, SlotPrice, build_rate_book, classify_slots, standing_charge_for_period
 from ..timeutils import LONDON, local_day_bounds, now_utc
 from . import repository as repo
 
@@ -121,8 +124,148 @@ class Platform:
             except Exception as exc:  # noqa: BLE001
                 result["solar_error"] = str(exc)
                 repo.log_quality_event(s, self.property_id, "error", self.solar.name, str(exc))
+            if self.settings.operating_mode == OperatingMode.SHADOW:
+                try:
+                    result["shadow_run_id"] = self._record_shadow_plan(s)
+                except Exception as exc:  # noqa: BLE001
+                    result["shadow_error"] = str(exc)
+                    repo.log_quality_event(s, self.property_id, "error", "shadow_planner", str(exc))
+            try:
+                result["building_model_id"] = self._refresh_building_model(s)
+            except Exception as exc:  # noqa: BLE001
+                result["building_model_error"] = str(exc)
+                repo.log_quality_event(s, self.property_id, "error", "thermal_model", str(exc))
         self.last_poll.update(result)
         return result
+
+    # ------------------------------------------------------------------ heat loss (1R1C fit)
+    def thermal_estimate(self, s, days: int = 14, now: datetime | None = None) -> dict[str, Any]:
+        """Fit the single-zone building model to recent history and report the heat loss.
+
+        Inputs are resampled onto a half-hour grid: indoor and outdoor temperature
+        as the last reading at each grid point (gaps over 2 h become NaN), heat
+        delivered for space heating from the cumulative counter, and PV power as a
+        solar proxy when present. The survey heat loss, if recorded on the property,
+        acts as a weak prior. Everything here is read-only.
+        """
+        now = now or self.clock.now()
+        end = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
+        start = end - timedelta(days=days)
+        step = timedelta(minutes=30)
+        n = int((end - start) / step)
+        grid = [start + i * step for i in range(n + 1)]
+
+        def series(sig: Signal) -> list[float]:
+            rows = repo.measurements_for(s, self.property_id, sig.value, start - timedelta(hours=3), end)
+            pts = [(as_utc(r.ts), r.value) for r in rows if r.value is not None]
+            out, j, last = [], 0, None
+            for g in grid:
+                while j < len(pts) and pts[j][0] <= g:
+                    last = pts[j]
+                    j += 1
+                out.append(last[1] if last and g - last[0] <= timedelta(hours=2) else math.nan)
+            return out
+
+        t_in, t_out = series(Signal.INDOOR_TEMPERATURE), series(Signal.OUTDOOR_TEMPERATURE)
+        counter = repo.measurements_for(s, self.property_id, Signal.HP_HEAT_HEATING_KWH.value, start - timedelta(hours=3), end + step)
+        ints = counter_to_intervals([Measurement(signal=Signal.HP_HEAT_HEATING_KWH, ts=as_utc(r.ts), value=r.value, quality=Quality(r.quality),
+                                                 provenance=Provenance(r.provenance), source_ref=r.source_ref) for r in counter], "heating")
+        kwh_by_start = {as_utc(i.start): i.kwh for i in ints}
+        q_kw = [kwh_by_start.get(g, math.nan) / 0.5 if g in kwh_by_start else math.nan for g in grid]
+        pv = series(Signal.PV_POWER)
+        have_pv = any(not math.isnan(v) for v in pv)
+        usable = sum(1 for a, b, c in zip(t_in, t_out, q_kw) if not (math.isnan(a) or math.isnan(b) or math.isnan(c)))
+        base = {"window_start": start.isoformat(), "window_end": end.isoformat(), "samples": usable, "model_type": "1R1C",
+                "solar_proxy": "pv_power" if have_pv else None}
+        if usable < 48:
+            return {**base, "status": "insufficient_data",
+                    "reason": f"Only {usable} usable half-hours of indoor, outdoor and heat data in the last {days} days; need at least 48 (one day)."}
+        prop = s.get(m.Property, self.property_id)
+        survey = None
+        if prop and prop.survey_heat_loss_kw and prop.survey_design_indoor_c is not None and prop.survey_design_outdoor_c is not None:
+            survey = survey_to_coefficient(prop.survey_heat_loss_kw, prop.survey_design_indoor_c, prop.survey_design_outdoor_c)
+        fit = fit_rc_model(t_in, t_out, q_kw, pv if have_pv else None, step_hours=0.5, survey_ua_w_per_k=survey)
+        if not math.isfinite(fit.ua_w_per_k) or fit.ua_w_per_k <= 0:
+            return {**base, "status": "not_identified", "reason": "The data so far does not pin down a physical heat loss. " + "; ".join(fit.notes or [])}
+        ua = fit.ua_w_per_k
+        cap = fit.capacity_kwh_per_k if math.isfinite(fit.capacity_kwh_per_k) else None
+        return {**base, "status": "ok", "heat_loss_w_per_k": round(ua, 1),
+                "ci_low_w_per_k": round(fit.ua_ci_low, 1) if fit.ua_ci_low is not None else None,
+                "ci_high_w_per_k": round(fit.ua_ci_high, 1) if fit.ua_ci_high is not None else None,
+                "design_kw_at_minus_2": round(ua * 23.0 / 1000.0, 2),  # 21 °C inside, -2 °C outside
+                "capacity_kwh_per_k": round(cap, 2) if cap else None,
+                "time_constant_h": round(cap * 1000.0 / ua, 1) if cap else None,
+                "internal_gain_kw": round(fit.internal_gain_kw, 2) if math.isfinite(fit.internal_gain_kw) else None,
+                "solar_aperture": round(fit.solar_aperture_m2, 2) if have_pv and math.isfinite(fit.solar_aperture_m2) else None,
+                "confidence": round(fit.confidence, 2), "rmse_c": round(fit.rmse_c, 3) if fit.rmse_c is not None else None,
+                "survey_w_per_k": round(survey, 1) if survey else None, "notes": fit.notes or []}
+
+    def _refresh_building_model(self, s, min_age: timedelta = timedelta(hours=6)) -> int | None:
+        """Persist a new BuildingModelVersion at most every ``min_age``."""
+        now = self.clock.now()
+        latest = s.query(m.BuildingModelVersion).filter_by(property_id=self.property_id).order_by(m.BuildingModelVersion.created_at.desc()).first()
+        if latest and now - as_utc(latest.created_at) < min_age:
+            return latest.id
+        est = self.thermal_estimate(s, now=now)
+        if est["status"] != "ok":
+            return latest.id if latest else None
+        row = m.BuildingModelVersion(property_id=self.property_id, created_at=now, model_type="1R1C",
+                                     heat_loss_w_per_k=est["heat_loss_w_per_k"], heat_loss_ci_low=est["ci_low_w_per_k"],
+                                     heat_loss_ci_high=est["ci_high_w_per_k"], thermal_capacity_kwh_per_k=est["capacity_kwh_per_k"],
+                                     solar_gain_factor=est["solar_aperture"], internal_gain_kw=est["internal_gain_kw"],
+                                     confidence=est["confidence"], training_window_start=datetime.fromisoformat(est["window_start"]),
+                                     training_window_end=datetime.fromisoformat(est["window_end"]),
+                                     metrics={"rmse_c": est["rmse_c"], "samples": est["samples"], "notes": est["notes"]})
+        s.add(row)
+        s.flush()
+        return row.id
+
+    # ------------------------------------------------------------------ shadow planning
+    def _price_slots(self, s, start: datetime, end: datetime) -> list[SlotPrice]:
+        tariff_code = self.last_poll.get("tariff_code")
+        if not tariff_code:
+            return []
+        book = build_rate_book([_ri(r) for r in repo.rates_for(s, tariff_code, start, end)], tariff_code)
+        disp = s.query(m.SmartChargingDispatch).filter(m.SmartChargingDispatch.property_id == self.property_id,
+                                                        m.SmartChargingDispatch.end > start - timedelta(days=1)).all()
+        from ..domain import Dispatch, DispatchKind
+        dispatches = [Dispatch(kind=DispatchKind(d.kind), start=as_utc(d.start), end=as_utc(d.end), charge_kwh=d.charge_kwh,
+                               source=d.source, location=d.location, observed_at=as_utc(d.observed_at)) for d in disp]
+        return classify_slots(start, end, book, dispatches)
+
+    def _latest_weather(self, s) -> list[m.WeatherForecast]:
+        latest_issue = s.query(m.WeatherForecast.issued_at).filter_by(property_id=self.property_id).order_by(m.WeatherForecast.issued_at.desc()).first()
+        if not latest_issue:
+            return []
+        return s.query(m.WeatherForecast).filter_by(property_id=self.property_id, issued_at=latest_issue[0]).order_by(m.WeatherForecast.valid_at).all()
+
+    def shadow_plan(self, s, now: datetime | None = None) -> dict[str, Any]:
+        """What PredHeat would do over the next 24 hours. Read-only; see optimiser.shadow."""
+        now = now or self.clock.now()
+        start = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
+        slots = self._price_slots(s, start, start + timedelta(hours=25))
+        latest = repo.latest_measurements(s, self.property_id)
+
+        def value(sig: Signal) -> float | None:
+            r = latest.get(sig.value)
+            return r.value if r else None
+
+        forecast = [(as_utc(w.valid_at), w.temperature_c) for w in self._latest_weather(s) if w.temperature_c is not None]
+        return build_shadow_plan(now, slots, dhw_tank_c=value(Signal.DHW_TANK_TEMPERATURE),
+                                 dhw_setpoint_c=value(Signal.DHW_SETPOINT), outdoor_forecast=forecast)
+
+    def _record_shadow_plan(self, s) -> int | None:
+        plan = self.shadow_plan(s)
+        if plan["status"] != "indicative":
+            return None
+        run = m.OptimisationRun(property_id=self.property_id, issued_at=self.clock.now(),
+                                horizon_start=datetime.fromisoformat(plan["horizon_start"]),
+                                horizon_end=datetime.fromisoformat(plan["horizon_end"]),
+                                mode=self.settings.operating_mode.value, tariff_code=self.last_poll.get("tariff_code"),
+                                slots=plan["actions"], status="shadow")
+        s.add(run)
+        s.flush()
+        return run.id
 
     # ------------------------------------------------------------------ queries
     async def health(self) -> list[ProviderHealth]:
@@ -153,6 +296,9 @@ class Platform:
                 book = build_rate_book([_ri(r) for r in repo.rates_for(s, tariff_code, now - timedelta(hours=1), now + timedelta(hours=1))], tariff_code)
                 ri = book.rate_at(now)
                 rate_now = ri.rate_p_per_kwh if ri else None
+            full = self.shadow_plan(s, now)
+            plan = {"status": full["status"], "reason": full["reason"], "actions": full["actions"]}
+            heat_loss = self.thermal_estimate(s, now=now)
             return {
                 "generated_at": now.isoformat(),
                 "data_mode": self.settings.data_mode.value,
@@ -168,7 +314,9 @@ class Platform:
                 "tariff_code": tariff_code,
                 "import_rate_now_p": rate_now,
                 "today": costs,
-                "next_action": {"kind": "none", "reason": "Monitor mode: no control actions are generated."},
+                "plan": plan,
+                "next_action": full["next_action"],
+                "heat_loss": heat_loss,
             }
 
     def _energy_costs(self, s, start_day: date, end_day: date) -> dict[str, Any]:
@@ -263,29 +411,19 @@ class Platform:
         return out
 
     def timeline(self, hours: int = 48) -> dict[str, Any]:
-        """Forecast timeline: prices by class, weather, solar. No optimisation yet (Phase 4)."""
+        """Forecast timeline: prices by class, weather, solar, and the rule-based shadow plan."""
         now = self.clock.now()
         start = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
         end = start + timedelta(hours=hours)
         with session_scope(self.settings.database_url) as s:
             tariff_code = self.last_poll.get("tariff_code")
             slots = []
-            if tariff_code:
-                book = build_rate_book([_ri(r) for r in repo.rates_for(s, tariff_code, start, end)], tariff_code)
-                disp = s.query(m.SmartChargingDispatch).filter(m.SmartChargingDispatch.property_id == self.property_id,
-                                                                m.SmartChargingDispatch.end > start - timedelta(days=1)).all()
-                from ..domain import Dispatch, DispatchKind
-                dispatches = [Dispatch(kind=DispatchKind(d.kind), start=as_utc(d.start), end=as_utc(d.end), charge_kwh=d.charge_kwh,
-                                       source=d.source, location=d.location, observed_at=as_utc(d.observed_at)) for d in disp]
-                for sp in classify_slots(start, end, book, dispatches):
-                    slots.append({"start": sp.start.isoformat(), "end": sp.end.isoformat(), "rate_p": None if sp.rate_p_per_kwh != sp.rate_p_per_kwh else sp.rate_p_per_kwh,
-                                  "price_class": sp.price_class.value, "assumed": sp.assumed})
-            # latest weather forecast issue
-            latest_issue = s.query(m.WeatherForecast.issued_at).filter_by(property_id=self.property_id).order_by(m.WeatherForecast.issued_at.desc()).first()
-            weather = []
-            if latest_issue:
-                for w in s.query(m.WeatherForecast).filter_by(property_id=self.property_id, issued_at=latest_issue[0]).order_by(m.WeatherForecast.valid_at).all():
-                    weather.append({"valid_at": as_utc(w.valid_at).isoformat(), "temperature_c": w.temperature_c, "cloud_cover_pct": w.cloud_cover_pct, "wind_speed_ms": w.wind_speed_ms})
+            for sp in self._price_slots(s, start, end):
+                slots.append({"start": sp.start.isoformat(), "end": sp.end.isoformat(), "rate_p": None if sp.rate_p_per_kwh != sp.rate_p_per_kwh else sp.rate_p_per_kwh,
+                              "price_class": sp.price_class.value, "assumed": sp.assumed})
+            weather = [{"valid_at": as_utc(w.valid_at).isoformat(), "temperature_c": w.temperature_c, "cloud_cover_pct": w.cloud_cover_pct, "wind_speed_ms": w.wind_speed_ms}
+                       for w in self._latest_weather(s)]
+            plan = self.shadow_plan(s, now)
             latest_solar = s.query(m.SolarForecast.issued_at).filter_by(property_id=self.property_id).order_by(m.SolarForecast.issued_at.desc()).first()
             solar = []
             if latest_solar:
@@ -293,8 +431,7 @@ class Platform:
                     solar.append({"period_start": as_utc(p.period_start).isoformat(), "pv_kw": p.pv_estimate_kw, "pv10_kw": p.pv_estimate10_kw, "pv90_kw": p.pv_estimate90_kw})
             summary = {c.value: sum(1 for x in slots if x["price_class"] == c.value) for c in PriceClass}
         return {"generated_at": now.isoformat(), "horizon_hours": hours, "tariff_code": tariff_code, "slots": slots,
-                "slot_summary": summary, "weather": weather, "solar": solar,
-                "optimisation": {"status": "not_available", "reason": "Shadow optimisation arrives in Phase 4."}}
+                "slot_summary": summary, "weather": weather, "solar": solar, "optimisation": plan}
 
     def system_health(self, provider_health: list[ProviderHealth]) -> dict[str, Any]:
         now = self.clock.now()
@@ -314,6 +451,8 @@ class Platform:
                       "weather_points": s.query(m.WeatherForecast).filter_by(property_id=self.property_id).count(),
                       "solar_points": s.query(m.SolarForecast).filter_by(property_id=self.property_id).count(),
                       "dispatches": s.query(m.SmartChargingDispatch).filter_by(property_id=self.property_id).count(),
+                      "shadow_plans": s.query(m.OptimisationRun).filter_by(property_id=self.property_id).count(),
+                      "building_models": s.query(m.BuildingModelVersion).filter_by(property_id=self.property_id).count(),
                       "control_actions": s.query(m.ControlExecutionLog).filter_by(property_id=self.property_id).count()}
         return {"generated_at": now.isoformat(), "data_mode": self.settings.data_mode.value, "operating_mode": self.settings.operating_mode.value,
                 "control_enabled": self.settings.control_enabled,

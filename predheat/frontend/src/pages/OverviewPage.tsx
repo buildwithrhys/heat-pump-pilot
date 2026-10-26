@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, num, pounds, type Overview, type Reading } from "../api";
+import { PlanList, when } from "./plan";
+import { EnergyFlow } from "./flow";
 
 function Tile({ title, reading, unit = "", dp = 1, sub }: { title: string; reading: Reading | null | undefined; unit?: string; dp?: number; sub?: string }) {
   const v = reading?.value;
@@ -79,12 +81,50 @@ export default function OverviewPage() {
       </div>
 
       <div className="section">
-        <h2>Optimiser</h2>
+        <h2>What PredHeat would do</h2>
         <div className="card">
-          <h3>Next planned action</h3>
-          <div className="big" style={{ fontSize: "1.1rem" }}>{o.next_action.kind === "none" ? "None" : o.next_action.kind}</div>
-          <div className="sub">{o.next_action.reason}</div>
+          <h3>{o.next_action.state === "now" ? "Now" : "Next"}{o.operating_mode === "shadow" ? <span className="tag">shadow, recorded</span> : <span className="tag">monitor, display only</span>}</h3>
+          <div className="big" style={{ fontSize: "1.1rem" }}>{o.next_action.kind === "none" ? "Nothing to shift" : o.next_action.label ?? o.next_action.kind}</div>
+          <div className="sub">{o.next_action.start && o.next_action.end ? `${when(o.next_action.start, o.next_action.end)} · ` : ""}{o.next_action.reason}</div>
         </div>
+        <PlanList plan={o.plan} compact />
+      </div>
+      <div className="section">
+        <h2>Your house</h2>
+        <div className="grid">
+          <div className="card">
+            <h3>Heat loss{o.heat_loss.status === "ok" && <span className="tag">{Math.round((o.heat_loss.confidence ?? 0) * 100)}% confidence</span>}</h3>
+            {o.heat_loss.status === "ok" ? (
+              <>
+                <div className="big">{num(o.heat_loss.heat_loss_w_per_k, 0, " W/K")}</div>
+                <div className="sub">about {num(o.heat_loss.design_kw_at_minus_2, 1, " kW")} at −2 °C outside, 21 °C inside{o.heat_loss.ci_low_w_per_k != null && o.heat_loss.ci_high_w_per_k != null ? ` · range ${Math.round(o.heat_loss.ci_low_w_per_k)} to ${Math.round(o.heat_loss.ci_high_w_per_k)} W/K` : ""}</div>
+              </>
+            ) : (
+              <>
+                <div className="big" style={{ fontSize: "1.1rem" }}>Learning</div>
+                <div className="sub">{o.heat_loss.reason}</div>
+              </>
+            )}
+          </div>
+          {o.heat_loss.status === "ok" && (
+            <div className="card">
+              <h3>How quickly it cools</h3>
+              <div className="big">{num(o.heat_loss.time_constant_h, 0, " h")}</div>
+              <div className="sub">time constant · stores {num(o.heat_loss.capacity_kwh_per_k, 1, " kWh")} per °C{o.heat_loss.internal_gain_kw != null ? ` · ${num(o.heat_loss.internal_gain_kw, 2, " kW")} internal gains` : ""}</div>
+            </div>
+          )}
+          {o.heat_loss.status === "ok" && (
+            <div className="card">
+              <h3>Based on</h3>
+              <div className="big">{o.heat_loss.samples}</div>
+              <div className="sub">half-hours of data over {Math.round((new Date(o.heat_loss.window_end).getTime() - new Date(o.heat_loss.window_start).getTime()) / 864e5)} days{o.heat_loss.notes && o.heat_loss.notes.length > 0 ? ` · ${o.heat_loss.notes.join("; ")}` : ""}</div>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="section">
+        <h2>Where today's energy went</h2>
+        <EnergyFlow costs={o.today} title="Electricity in, heat out, today" />
       </div>
     </>
   );

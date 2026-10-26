@@ -50,7 +50,8 @@ def test_timeline_has_prices_weather_and_solar(platform):
     assert t["slot_summary"]["guaranteed_off_peak"] == 24
     assert len(t["weather"]) == 48
     assert len(t["solar"]) == 96
-    assert t["optimisation"]["status"] == "not_available"
+    assert t["optimisation"]["status"] == "indicative"
+    assert t["optimisation"]["actions"]
 
 
 def test_api_endpoints(platform):

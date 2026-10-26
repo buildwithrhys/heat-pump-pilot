@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type Timeline } from "../api";
+import { PlanList } from "./plan";
 
 const css = (v: string) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const hhmm = (iso: string) => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -29,8 +30,12 @@ export default function ForecastPage() {
   const tickEvery = (n: number) => (i: number) => (i % n === 0 ? undefined : "");
   return (
     <>
+      <div className="section">
+        <h2>What PredHeat would do in the next 24 hours</h2>
+        <PlanList plan={t.optimisation} />
+      </div>
       <div className="note">
-        {t.optimisation.reason} This page shows the inputs the optimiser will use: prices by certainty, weather and solar. Planned Intelligent Octopus dispatches are shown but never assumed to qualify until they start.
+        The charts below are the inputs behind the plan: prices by certainty, weather and solar. Planned Intelligent Octopus dispatches are shown but never assumed to qualify until they start.
       </div>
       <div className="chart">
         <h4>Import price, next 48 hours ({t.tariff_code})</h4>

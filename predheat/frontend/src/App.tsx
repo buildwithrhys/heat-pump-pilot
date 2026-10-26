@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Overview } from "./api";
+import { api, MODE_LABEL, type Overview } from "./api";
 import OverviewPage from "./pages/OverviewPage";
 import CostsPage from "./pages/CostsPage";
 import ForecastPage from "./pages/ForecastPage";
@@ -22,7 +22,7 @@ export default function App() {
         <h1>PredHeat</h1>
         {meta && (
           <span className="mode">
-            {meta.data_mode === "simulated" ? "Simulated data" : "Live data"} · mode: {meta.operating_mode} · control {meta.control_enabled ? "ENABLED" : "off"}
+            {meta.data_mode === "simulated" ? "Simulated data" : "Live data"} · {MODE_LABEL[meta.operating_mode] ?? meta.operating_mode} · {meta.control_enabled ? "control ENABLED" : "read-only"}
           </span>
         )}
       </header>

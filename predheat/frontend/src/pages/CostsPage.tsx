@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, num, pounds, type Costs, type DailyRow } from "../api";
+import { EnergyFlow } from "./flow";
+
+/** "Wed 8 Oct" from an ISO date, UK style. */
+const ukDate = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 
 const css = (v: string) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
@@ -18,6 +22,7 @@ export default function CostsPage() {
     hotwater: +(d.hot_water.cost_pence / 100).toFixed(2),
     heatkwh: d.space_heating.kwh_heat ?? 0,
     cop: d.space_heating.cop,
+    label: ukDate(d.date),
   }));
   const c1 = css("--s1"), c2 = css("--s2"), grid = css("--grid"), ink2 = css("--ink-2");
   return (
@@ -34,6 +39,10 @@ export default function CostsPage() {
         <div className="card"><h3>Heat pump total</h3><div className="big">{pounds(s.heat_pump_total.cost_pence)}</div><div className="sub">{num(s.heat_pump_total.kwh_electric, 1, " kWh")} incl. aux {num(s.auxiliary.kwh_electric, 2)} and standby {num(s.standby.kwh_electric, 2)} (estimated)</div></div>
         <div className="card"><h3>Cost per kWh of heat</h3><div className="big">{s.space_heating.pence_per_kwh_heat != null ? `${s.space_heating.pence_per_kwh_heat.toFixed(1)}p` : "–"}</div><div className="sub">space heating; hot water {s.hot_water.pence_per_kwh_heat != null ? `${s.hot_water.pence_per_kwh_heat.toFixed(1)}p` : "–"}</div></div>
         <div className="card"><h3>Whole home import<span className={`tag ${s.whole_home_import.quality}`}>{s.whole_home_import.quality}</span></h3><div className="big">{pounds(s.whole_home_import.cost_pence)}</div><div className="sub">{num(s.whole_home_import.kwh, 1, " kWh")} + standing {pounds(s.standing_charge_pence)}</div></div>
+      </div>
+
+      <div className="section">
+        <EnergyFlow costs={s} title={`Electricity in, heat out, last ${days} days`} />
       </div>
 
       <div className="section chart">
@@ -57,7 +66,7 @@ export default function CostsPage() {
           <tbody>
             {data.daily.map((d) => (
               <tr key={d.date}>
-                <td>{d.date}</td>
+                <td style={{ whiteSpace: "nowrap" }}>{ukDate(d.date)}</td>
                 <td className="num">{num(d.space_heating.kwh_electric, 1)}</td>
                 <td className="num">{num(d.space_heating.kwh_heat, 1)}</td>
                 <td className="num">{num(d.space_heating.cop, 2)}</td>
