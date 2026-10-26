@@ -22,7 +22,7 @@ from ..domain import SIGNAL_CATALOGUE, CapabilityReport, Measurement, Provenance
 from ..integrations.base import ProviderHealth
 from ..model import DESIGN_INDOOR_C, COPModel, design_outdoor_c, fit_cop_model, fit_rc_model, prior_cop_model, survey_to_coefficient
 from ..optimiser import MPCInputs, build_mpc_plan, build_shadow_plan
-from ..pricing import RATES_AS_OF, REGION_NAMES, PriceClass, SlotPrice, build_rate_book, classify_slots, load_templates, replay, standing_charge_for_period
+from ..pricing import RATES_AS_OF, REGION_NAMES, PriceClass, SlotPrice, build_rate_book, classify_slots, load_templates, replay, replay_with_book, scenario_intervals, standing_charge_for_period
 from ..timeutils import LONDON, local_day_bounds, now_utc
 from . import repository as repo
 
@@ -43,6 +43,8 @@ class Platform:
     simulated_home: Any = None
     controller: Any = None
     settings_store: Any = None
+    openmeteo: Any = None  # irradiance provider when a location is known
+    octopus_api: Any = None  # direct rates for the tariff comparison
     seen_at: dict[str, datetime] = field(default_factory=dict)  # signal -> when its entity was last seen live
     _memo: dict[tuple, Any] = field(default_factory=dict)
 
@@ -77,6 +79,10 @@ class Platform:
                                         latitude=self.settings.latitude, longitude=self.settings.longitude)
             if self.settings.latitude is not None and prop.latitude != self.settings.latitude:
                 prop.latitude, prop.longitude = self.settings.latitude, self.settings.longitude
+            if self.openmeteo is None and self.settings.data_mode == DataMode.HOME_ASSISTANT and prop.latitude is not None and prop.longitude is not None:
+                from ..integrations.openmeteo import OpenMeteoProvider
+
+                self.openmeteo = OpenMeteoProvider(prop.latitude, prop.longitude)
             if self.settings.survey_heat_loss_kw:
                 prop.survey_heat_loss_kw = self.settings.survey_heat_loss_kw
                 prop.survey_design_indoor_c = DESIGN_INDOOR_C
@@ -186,6 +192,11 @@ class Platform:
             except Exception as exc:  # noqa: BLE001
                 result["weather_error"] = str(exc)
                 repo.log_quality_event(s, self.property_id, "error", self.weather.name, str(exc))
+            if self.openmeteo is not None:
+                try:
+                    result["irradiance"] = repo.upsert_measurements(s, self.property_id, await self.openmeteo.irradiance_history(1))
+                except Exception as exc:  # noqa: BLE001
+                    result["irradiance_error"] = str(exc)
             try:
                 sol = await self.solar.forecast(48)
                 result["solar_points"] = repo.store_solar(s, self.property_id, sol)
@@ -275,8 +286,10 @@ class Platform:
                                                  provenance=Provenance(r.provenance), source_ref=r.source_ref) for r in counter], "heating")
         kwh_by_start = {as_utc(i.start): i.kwh for i in ints}
         q_kw = [kwh_by_start.get(g, math.nan) / 0.5 if g in kwh_by_start else math.nan for g in grid]
-        pv = series(Signal.PV_POWER)
-        have_pv = any(not math.isnan(v) for v in pv)
+        irr = series(Signal.SOLAR_IRRADIANCE)
+        have_irr = any(not math.isnan(v) for v in irr)
+        pv = [v / 1000.0 for v in irr] if have_irr else series(Signal.PV_POWER)  # kW/m2 proxy or PV kW proxy
+        have_pv = have_irr or any(not math.isnan(v) for v in pv)
         usable_idx = [i for i, (a, b, c) in enumerate(zip(t_in, t_out, q_kw)) if not (math.isnan(a) or math.isnan(b) or math.isnan(c))]
         usable = len(usable_idx)
         days_with_data = len({grid[i].astimezone(LONDON).date() for i in usable_idx})
@@ -291,7 +304,7 @@ class Platform:
         survey = ({"kw": survey_kw, "outdoor_c": survey_at, "ua_w_per_k": round(survey_ua, 1),
                    "kw_at_design": round(survey_ua * (DESIGN_INDOOR_C - design_c) / 1000.0, 2)} if survey_ua else None)
         base = {"window_start": start.isoformat(), "window_end": end.isoformat(), "lookback_days": days, "samples": usable,
-                "days_with_data": days_with_data, "days_needed": 7, "model_type": "1R1C", "solar_proxy": "pv_power" if have_pv else None,
+                "days_with_data": days_with_data, "days_needed": 7, "model_type": "1R1C", "solar_proxy": "irradiance" if have_irr else ("pv_power" if have_pv else None),
                 "design_outdoor_c": design_c, "design_indoor_c": DESIGN_INDOOR_C, "design_region": region, "survey": survey,
                 "outdoor_range_c": [round(min(outdoor_seen), 1), round(max(outdoor_seen), 1)] if outdoor_seen else None,
                 "heating_hours": round(heat_on_hours, 1), "rated_kw": self.settings.heat_pump_rated_kw}
@@ -360,6 +373,121 @@ class Platform:
         s.flush()
         return row.id
 
+    def _cost_backtest(self, s, runs, now: datetime) -> dict[str, Any]:
+        """Predicted thermostat cost for elapsed slots against what the heating actually cost, using the
+        prices PredHeat had stored at the time. Scores the plan on what it knew then."""
+        hp = counter_to_intervals([Measurement(signal=Signal.HP_ELEC_HEATING_KWH, ts=as_utc(r.ts), value=r.value, quality=Quality(r.quality),
+                                               provenance=Provenance(r.provenance), source_ref=r.source_ref)
+                                   for r in repo.measurements_for(s, self.property_id, Signal.HP_ELEC_HEATING_KWH.value,
+                                                                  min(as_utc(r.horizon_start) for r in runs) - timedelta(hours=2), now)], "e")
+        kwh_by_slot = {as_utc(i.start): i.kwh for i in hp}
+        pred_p, actual_p, pred_kwh, actual_kwh, n = 0.0, 0.0, 0.0, 0.0, 0
+        for r in runs:
+            for p in r.slots.get("predicted", []):
+                st = datetime.fromisoformat(p["start"])
+                if st + timedelta(minutes=30) > now or "cost_p_baseline" not in p:
+                    continue
+                k = kwh_by_slot.get(st)
+                if k is None:
+                    continue
+                pred_p += p["cost_p_baseline"]
+                actual_p += k * p["rate_p"]
+                pred_kwh += p["heat_kw_baseline"] / max(p.get("cop", 1.0) if "cop" in p else 3.0, 1.0) * 0.5
+                actual_kwh += k
+                n += 1
+        if n == 0:
+            return {"status": "waiting", "slots": 0}
+        return {"status": "ok", "slots": n, "predicted_pence": round(pred_p, 1), "actual_pence": round(actual_p, 1),
+                "predicted_kwh": round(pred_kwh, 2), "actual_kwh": round(actual_kwh, 2),
+                "error_pct": round((pred_p - actual_p) / actual_p * 100.0, 1) if actual_p else None}
+
+    # ------------------------------------------------------------------ annual forecast from history and climate normals
+    def _annual_profile(self, s, now: datetime) -> dict[str, Any]:
+        """Regress daily import on heating degree-days over the stored history and apply it to a
+        typical year of monthly mean temperatures for the home's latitude. Indicative."""
+        from ..pricing.climate import annual_degree_days, typical_year
+
+        today = now.astimezone(LONDON).date()
+        xs, ys = [], []
+        for i in range(60, 0, -1):
+            d = today - timedelta(days=i)
+            start, end = local_day_bounds(d)
+            temps = [r.value for r in repo.measurements_for(s, self.property_id, Signal.OUTDOOR_TEMPERATURE.value, start, end) if r.value is not None]
+            if len(temps) < 12:
+                continue
+            hdd = sum(max(0.0, 15.5 - t) for t in temps) / len(temps)
+            metered = repo.metered_intervals_for(s, self.property_id, start, end)
+            if metered:
+                kwh = sum(r.kwh for r in metered)
+            else:
+                c = self._energy_costs(s, d, d + timedelta(days=1))
+                kwh = c["whole_home_import"]["kwh"] if c["whole_home_import"]["kwh"] > 0 and c["whole_home_import"].get("plausible", True) else c["heat_pump_total"]["kwh_electric"]
+            if kwh > 0:
+                xs.append(hdd)
+                ys.append(kwh)
+        if len(xs) < 7:
+            return {"status": "waiting", "reason": f"Needs at least 7 days of consumption and outdoor temperature; has {len(xs)}.", "days": len(xs)}
+        n = len(xs)
+        mx, my = sum(xs) / n, sum(ys) / n
+        sxx = sum((x - mx) ** 2 for x in xs)
+        slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx if sxx > 1e-9 else 0.0
+        intercept = max(0.0, my - slope * mx)
+        prop = s.get(m.Property, self.property_id)
+        year = typical_year(prop.latitude if prop else None)
+        hdd_year = annual_degree_days(year)
+        annual_kwh = intercept * 365 + max(slope, 0.0) * hdd_year
+        return {"status": "ok", "days": n, "kwh_per_day_no_heating": round(intercept, 2), "kwh_per_degree_day": round(max(slope, 0.0), 3),
+                "annual_degree_days": round(hdd_year, 0), "annual_kwh": round(annual_kwh, 0), "climate": year["label"],
+                "note": "From a straight-line fit of daily electricity against how cold each day was, applied to a typical year for your area. Indicative; a mild or cold winter moves it by a fifth either way."}
+
+    # ------------------------------------------------------------------ trial report
+    def trial_report(self, s, days: int = 28, now: datetime | None = None) -> dict[str, Any]:
+        """Alternating-day trial: heating cost per degree-day on optimised days against baseline days.
+
+        Degree-days use a 15.5 °C base from the hourly outdoor temperature. The saving is the
+        difference of the two means, with a standard error from the day-to-day spread, so the
+        reader can see whether it is real or noise.
+        """
+        from ..control import Controller
+
+        now = now or self.clock.now()
+        today = now.astimezone(LONDON).date()
+        rows = []
+        for i in range(days, 0, -1):
+            d = today - timedelta(days=i)
+            start, end = local_day_bounds(d)
+            temps = [r.value for r in repo.measurements_for(s, self.property_id, Signal.OUTDOOR_TEMPERATURE.value, start, end) if r.value is not None]
+            if len(temps) < 12:
+                continue
+            hdd = sum(max(0.0, 15.5 - t) for t in temps) / len(temps)
+            c = self._energy_costs(s, d, d + timedelta(days=1))
+            kwh = c["space_heating"]["kwh_electric"]
+            cost = c["space_heating"]["cost_pence"]
+            if kwh <= 0.05 or hdd <= 0.5:
+                continue
+            baseline = Controller.trial_day_is_baseline(datetime(d.year, d.month, d.day, 12, tzinfo=LONDON))
+            rows.append({"date": d.isoformat(), "group": "baseline" if baseline else "optimised", "degree_days": round(hdd, 2),
+                         "kwh": round(kwh, 2), "cost_pence": round(cost, 1), "pence_per_degree_day": round(cost / hdd, 2), "kwh_per_degree_day": round(kwh / hdd, 3)})
+        groups = {"baseline": [r["pence_per_degree_day"] for r in rows if r["group"] == "baseline"],
+                  "optimised": [r["pence_per_degree_day"] for r in rows if r["group"] == "optimised"]}
+
+        def stats(xs):
+            if not xs:
+                return {"n": 0, "mean": None, "se": None}
+            mean = sum(xs) / len(xs)
+            var = sum((x - mean) ** 2 for x in xs) / (len(xs) - 1) if len(xs) > 1 else 0.0
+            return {"n": len(xs), "mean": round(mean, 2), "se": round(math.sqrt(var / len(xs)), 2) if len(xs) > 1 else None}
+
+        b, o = stats(groups["baseline"]), stats(groups["optimised"])
+        out: dict[str, Any] = {"enabled": self.settings.trial_mode, "days": rows, "baseline": b, "optimised": o,
+                               "note": "Cost of space heating per degree-day (15.5 °C base) so cold and mild days compare fairly. Needs at least five days in each group before the difference means much."}
+        if b["n"] >= 2 and o["n"] >= 2 and b["mean"]:
+            diff = b["mean"] - o["mean"]
+            se = math.sqrt((b["se"] or 0) ** 2 + (o["se"] or 0) ** 2)
+            out.update({"saving_pence_per_degree_day": round(diff, 2), "saving_pct": round(diff / b["mean"] * 100.0, 1), "saving_se_pct": round(se / b["mean"] * 100.0, 1),
+                        "credible": b["n"] >= 5 and o["n"] >= 5 and abs(diff) > 2 * se})
+        return out
+
     # ------------------------------------------------------------------ control gate support
     def climate_entities(self) -> dict[str, Any]:
         """climate.* entities seen at discovery, with the myVAILLANT zone first and suggested when it is the only one."""
@@ -373,7 +501,11 @@ class Platform:
         rows.sort(key=lambda r: (r["platform"] != "mypyllant", r["entity_id"]))
         vaillant = [r for r in rows if r["platform"] == "mypyllant"]
         suggested = vaillant[0]["entity_id"] if len(vaillant) == 1 else (rows[0]["entity_id"] if len(rows) == 1 else None)
-        return {"entities": rows, "suggested": suggested}
+        heaters = [{"entity_id": eid, "name": st.attributes.get("friendly_name") or eid, "platform": st.platform, "state": st.state,
+                    "current_temperature": st.attributes.get("current_temperature"), "target": st.attributes.get("temperature")}
+                   for eid, st in states.items() if st.domain == "water_heater"]
+        heaters.sort(key=lambda r: (r["platform"] != "mypyllant", r["entity_id"]))
+        return {"entities": rows, "suggested": suggested, "water_heaters": heaters}
 
     def control_preconditions(self, s, now: datetime | None = None) -> dict[str, Any]:
         """What a person should have in place before switching Allow control on."""
@@ -438,11 +570,44 @@ class Platform:
         return self.mapping_view(s)
 
     # ------------------------------------------------------------------ tariff comparison
-    def compare_tariffs(self, s, days: int = 30, now: datetime | None = None) -> dict[str, Any]:
+    def compare_tariffs(self, s, days: int = 30, now: datetime | None = None, ev_kwh_per_day: float = 0.0, battery_kwh_per_day: float = 0.0) -> dict[str, Any]:
         now = now or self.clock.now()
-        return self._cached(("tariffs", days, now.date()), lambda: self._compare_tariffs(s, days, now))
+        return self._cached(("tariffs", days, now.date(), ev_kwh_per_day, battery_kwh_per_day),
+                            lambda: self._compare_tariffs(s, days, now, ev_kwh_per_day, battery_kwh_per_day))
 
-    def _compare_tariffs(self, s, days: int, now: datetime) -> dict[str, Any]:
+    async def refresh_live_rates(self, s, days: int, now: datetime | None = None) -> dict[str, Any]:
+        """Fetch each template's real unit rates for your region from the Octopus API and keep them
+        as rate intervals, so the replay uses published prices rather than indicative ones. Also
+        makes Agile replayable."""
+        if self.octopus_api is None:
+            return {"status": "unavailable", "reason": "no API client"}
+        now = now or self.clock.now()
+        tariff_code = self.last_poll.get("tariff_code") or ""
+        region = tariff_code.rsplit("-", 1)[-1] if "-" in tariff_code else None
+        if not region or len(region) != 1:
+            return {"status": "unavailable", "reason": "region unknown until the Octopus tariff code is seen"}
+        from ..pricing.octopus_api import expand_to_half_hours
+        start = now - timedelta(days=days + 1)
+        fetched = {}
+        for t in load_templates(self.settings.data_dir):
+            if t.code == "_error":
+                continue
+            product = await self.octopus_api.latest_product_code(t.code)
+            if not product:
+                continue
+            try:
+                rates = await self.octopus_api.unit_rates(product, region, start, now)
+                code = f"E-1R-{product}-{region}"
+                n = repo.upsert_rates(s, expand_to_half_hours(rates, start, now), now)
+                sc = await self.octopus_api.standing_charge(product, region)
+                fetched[t.code] = {"product": product, "tariff_code": code, "rows": n, "standing_p_per_day": sc}
+            except Exception as exc:  # noqa: BLE001
+                fetched[t.code] = {"error": str(exc)}
+        self.last_poll["live_rates"] = fetched
+        self._memo = {k: v for k, v in self._memo.items() if k[1:2] != ("tariffs",)}
+        return {"status": "ok", "region": region, "fetched": fetched}
+
+    def _compare_tariffs(self, s, days: int, now: datetime, ev_kwh_per_day: float = 0.0, battery_kwh_per_day: float = 0.0) -> dict[str, Any]:
         """Replay the last ``days`` of half-hourly import on each tariff template."""
         today = now.astimezone(LONDON).date()
         start, _ = local_day_bounds(today - timedelta(days=days))
@@ -493,16 +658,27 @@ class Platform:
                       "total_pence": round(cost + sc, 1), "kwh": round(total_kwh, 2), "prices_complete": complete,
                       "effective_p_per_kwh": round(cost / total_kwh, 2)}
         results = []
+        live = self.last_poll.get("live_rates") or {}
+        annual = self._annual_profile(s, now)
         for t in load_templates(self.settings.data_dir):
             if t.code == "_error":
                 results.append({"code": t.code, "name": t.name, "replayable": False, "note": t.description})
                 continue
+            lr = live.get(t.code) or {}
+            if lr.get("tariff_code"):
+                book = build_rate_book([_ri(r) for r in repo.rates_for(s, lr["tariff_code"], start, end)], lr["tariff_code"])
+                if book.intervals:
+                    r = replay_with_book(book, t, triples, lr.get("standing_p_per_day"), ev_kwh_per_day, battery_kwh_per_day)
+                    r.update({"description": t.description, "replayable": True, "requires": t.requires, "note": (t.note + " " if t.note else "") + f"Priced with published rates for product {lr['product']}.",
+                              "rates_source": "octopus_api", "annualised_pounds": _annualise(r, annual)})
+                    results.append(r)
+                    continue
             if not t.replayable:
                 results.append({"code": t.code, "name": t.name, "description": t.description, "replayable": False, "note": t.note, "requires": t.requires})
                 continue
-            r = replay(t, triples)
-            r.update({"description": t.description, "replayable": True, "requires": t.requires, "note": t.note,
-                      "annualised_pounds": round(r["total_pence"] / 100 / max(r["days"], 1) * 365, 0)})
+            r = replay(t, scenario_intervals(t, triples, ev_kwh_per_day, battery_kwh_per_day))
+            r.update({"description": t.description, "replayable": True, "requires": t.requires, "note": t.note, "rates_source": "indicative",
+                      "annualised_pounds": _annualise(r, annual)})
             results.append(r)
         ranked = sorted([r for r in results if r.get("replayable")], key=lambda r: r["total_pence"])
         best = ranked[0] if ranked else None
@@ -513,6 +689,8 @@ class Platform:
             actual["on_cheapest"] = actual["product"] == best["code"]
         return {"status": "ok", "days": days, "period": {"start": start.isoformat(), "end": end.isoformat()}, "source": source,
                 "kwh": round(total_kwh, 2), "rates_as_of": RATES_AS_OF, "region": region, "region_name": REGION_NAMES.get(region or "", None),
+                "scenario": {"ev_kwh_per_day": ev_kwh_per_day, "battery_kwh_per_day": battery_kwh_per_day},
+                "annual": annual, "live_rates": {k: v.get("product") for k, v in live.items() if v.get("product")},
                 "actual": actual, "results": ranked + [r for r in results if not r.get("replayable")],
                 "caveats": ["Replay of your consumption as it happened. A tariff with different cheap windows would change when PredHeat heats, so the optimised figure would be lower still.",
                             f"Unit rates are indicative published prices at the date shown, not your region's exact prices{' (your tariff code says region ' + region + (', ' + REGION_NAMES[region] if region in REGION_NAMES else '') + ')' if region else ''}; check before switching.",
@@ -572,7 +750,7 @@ class Platform:
 
     def _shadow_plan(self, s, now: datetime) -> dict[str, Any]:
         start = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
-        slots = self._price_slots(s, start, start + timedelta(hours=25))
+        slots = self._price_slots(s, start, start + timedelta(hours=49))
         latest = repo.latest_measurements(s, self.property_id)
 
         def value(sig: Signal) -> float | None:
@@ -583,7 +761,8 @@ class Platform:
         est = self.thermal_estimate(s, now=now)
         hp = self.heat_pump_estimate(s, now=now)
         t_in0 = value(Signal.INDOOR_TEMPERATURE)
-        priced = [sp for sp in slots if not math.isnan(sp.rate_p_per_kwh) and sp.end > now][:48]
+        # up to 48 hours ahead; beyond tomorrow's published prices the slots are "assumed", which classify_slots marks
+        priced = [sp for sp in slots if not math.isnan(sp.rate_p_per_kwh) and sp.end > now][:96]
         why_not = None
         if est["status"] != "ok":
             why_not = f"building model not ready ({est.get('reason', est['status'])})"
@@ -761,9 +940,10 @@ class Platform:
                                "rmse_baseline_c": round(math.sqrt(sum(x * x for x in rb) / len(rb)), 2),
                                "bias_baseline_c": round(sum(rb) / len(rb), 2)})
         if not eb:
-            return {"status": "waiting", "reason": f"{len(runs)} plans recorded; the first will be scored once its 24 hours have passed.", "runs": len(runs), "points": 0}
+            return {"status": "waiting", "reason": f"{len(runs)} plans recorded; the first will be scored once its horizon has passed.", "runs": len(runs), "points": 0}
         rmse_b = math.sqrt(sum(x * x for x in eb) / len(eb))
-        return {"status": "ok", "runs": len(by_run), "points": len(eb),
+        backtest = self._cost_backtest(s, runs, now)
+        return {"status": "ok", "runs": len(by_run), "points": len(eb), "cost_backtest": backtest,
                 "rmse_baseline_c": round(rmse_b, 2), "mae_baseline_c": round(sum(abs(x) for x in eb) / len(eb), 2),
                 "bias_baseline_c": round(sum(eb) / len(eb), 2),
                 "rmse_optimised_c": round(math.sqrt(sum(x * x for x in eo) / len(eo)), 2),
@@ -1092,6 +1272,13 @@ class _RealClock:
         return now_utc()
 
 
+def _annualise(r: dict[str, Any], annual: dict[str, Any]) -> float:
+    """Annual cost: the typical-year kWh at this tariff's effective rate when the profile is ready, else scaled from the period."""
+    if annual.get("status") == "ok" and r.get("effective_p_per_kwh") and annual.get("annual_kwh"):
+        return round((annual["annual_kwh"] * r["effective_p_per_kwh"] + r["standing_pence"] / max(r["days"], 1) * 365) / 100.0, 0)
+    return round(r["total_pence"] / 100 / max(r["days"], 1) * 365, 0)
+
+
 def _import_limit_kwh(days: int) -> float:
     """Domestic import sanity bound: 150 kWh a day, 1,000 kWh a week."""
     days = max(1, days)
@@ -1129,6 +1316,9 @@ def build_platform(settings: Settings | None = None, options_file: Path | None =
 
     client = HAClient()
     p = Platform(settings, HATelemetryProvider(client), HAOctopusTariffProvider(client), HAWeatherProvider(client), HASolcastProvider(client), _RealClock())
+    from ..pricing.octopus_api import OctopusAPI
+
+    p.octopus_api = OctopusAPI()
     from ..control import Controller
     from ..integrations.homeassistant.control import HAControlAdapter
 

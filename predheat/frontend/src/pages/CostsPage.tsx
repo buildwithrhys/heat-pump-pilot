@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, goToTab, num, pounds, type Costs, type DailyRow } from "../api";
 import { Term, tip } from "../glossary";
+import { TrialSection } from "./trial";
 import { EnergyFlow } from "./flow";
 
 /** A day with no readings at all shows dashes rather than zeros. */
@@ -84,6 +85,8 @@ export default function CostsPage() {
         )}
         <div className={`card ${s.gas_equivalent.saving_pence >= 0 ? "info" : "warn"}`}><h3>Same heat on gas<Term k="gas_comparison" /></h3><div className="big">{pounds(s.gas_equivalent.cost_pence)}</div><div className="sub">{s.gas_equivalent.saving_pence >= 0 ? `heat pump ${pounds(s.gas_equivalent.saving_pence)} cheaper` : `heat pump ${pounds(-s.gas_equivalent.saving_pence)} dearer`} · {num(s.gas_equivalent.kwh_gas, 0, " kWh")} of gas at {s.gas_equivalent.price_p_per_kwh}p, {Math.round(s.gas_equivalent.boiler_efficiency * 100)}% boiler</div></div>
       </div>
+
+      <TrialSection />
 
       <div className="section">
         <EnergyFlow costs={s} title={`Where the heat pump's energy came from and went, last ${days} days`} days={days} />

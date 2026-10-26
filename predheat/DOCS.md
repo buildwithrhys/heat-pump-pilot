@@ -18,7 +18,7 @@ The first start discovers your entities and backfills a week of history, which t
 
 **Forecast.** The next 24 hours of advice with a reason for each line, and the inputs behind it: prices by certainty (guaranteed off-peak, confirmed and planned Intelligent Octopus dispatches, peak), the weather forecast and the solar forecast.
 
-**Tariffs.** Your own consumption replayed on Intelligent Octopus Go, Go, Cosy and Flexible with indicative published rates, ranked by cost, next to what you actually paid. Add or correct tariffs by placing a `tariffs.yaml` in the add-on's data directory (`/addon_configs/<slug>/` or the `/data` folder inside the add-on).
+**Tariffs.** Your own consumption replayed on Intelligent Octopus Go, Go, Cosy, Flexible and, with published rates fetched, Agile, ranked by cost next to what you actually paid. Add an EV or a battery as a what-if, and see a typical year's cost from your own usage and your area's climate. Add or correct tariffs by placing a `tariffs.yaml` in the add-on's data directory (`/addon_configs/<slug>/` or the `/data` folder inside the add-on).
 
 **System health.** Data providers, integrations discovered, every signal with its source entity and freshness, forecast accuracy of recorded plans, control status, and recent data quality events.
 
@@ -38,7 +38,9 @@ Until the building model is identified, the plan is rule-based: hot water at the
 
 Once the heat loss figure reaches 30% confidence, the model-based optimiser takes over. For every half hour of the next 24 it chooses how hard to run the heat pump so that the electricity bill is lowest while the indoor temperature stays inside a comfort band of one degree either side of your setpoint and the house ends the day no colder than the setpoint. It uses the fitted heat loss and thermal capacity, the heat pump's COP at the forecast outdoor temperature, and the half-hourly prices. The Forecast tab shows the predicted indoor temperature for the plan and for a plain thermostat, and the saving between the two. Hot water is scheduled into the cheapest slots per unit of delivered heat before the morning.
 
-In **shadow** mode each plan is saved. Once its horizon has passed, the model's prediction of indoor temperature is scored against what the sensor measured, and the result appears on the System health tab. The target is 0.5 °C RMSE.
+In **shadow** mode each plan is saved. Once its horizon has passed, the model's prediction of indoor temperature is scored against what the sensor measured, and the cost it expected against what the heating actually cost at the prices it had then. Both appear on the System health tab. The target is a typical error under 0.5 °C.
+
+The plan looks up to 48 hours ahead. Octopus publishes tomorrow's prices around 16:00; before that the second day uses the standard rate and is marked as assumed.
 
 ## Letting PredHeat control the heating
 
@@ -71,6 +73,8 @@ Every proposal, change, failure and release is written to the control log, and t
 | Climate entity | the myVAILLANT zone when there is one | The heating zone PredHeat may adjust, chosen from a list. |
 | Operating mode | Monitor | Monitor, Shadow, Balanced or Max savings, each explained on its card. The controlling modes light up when Allow control is on. |
 | Maximum setpoint offset | 1.0 °C | How far PredHeat may move your setpoint either way. |
+| Hot water entity | none | Optional water_heater entity. PredHeat raises its target during a planned reheat and restores it afterwards. |
+| Trial: alternate days | off | Alternates PredHeat days and ordinary-thermostat days so the saving can be measured. Results on Energy costs. |
 | Gas unit price, boiler efficiency | 6.24p, 0.85 | For the "same heat on gas" comparison. |
 | Design outdoor temperature | from your region | The outdoor temperature heat loss is quoted at. |
 | Surveyed heat loss and its outdoor temperature | empty | From your installer's survey; used as a starting point and shown beside the learned figure. |

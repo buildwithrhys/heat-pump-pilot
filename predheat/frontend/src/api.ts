@@ -97,6 +97,8 @@ export interface PredictedSlot {
   rate_p: number;
   t_out: number;
   cost_p: number;
+  cost_p_baseline?: number;
+  elec_kwh?: number;
   mode: string;
 }
 
@@ -109,6 +111,7 @@ export interface ShadowPlan {
   horizon_start?: string;
   horizon_end?: string;
   predicted?: PredictedSlot[];
+  horizon_hours?: number;
   cost?: { optimised_p: number; baseline_p: number; saving_p: number } | null;
   model?: Record<string, string | number | null> | null;
 }
@@ -198,7 +201,21 @@ export interface ForecastAccuracy {
   target_rmse_c?: number;
   meets_target?: boolean;
   by_run?: { issued_at: string; points: number; rmse_baseline_c: number; bias_baseline_c: number }[];
+  cost_backtest?: { status: string; slots: number; predicted_pence?: number; actual_pence?: number; predicted_kwh?: number; actual_kwh?: number; error_pct?: number | null };
   note?: string;
+}
+
+export interface TrialDay { date: string; group: "baseline" | "optimised"; degree_days: number; kwh: number; cost_pence: number; pence_per_degree_day: number; kwh_per_degree_day: number }
+export interface TrialReport {
+  enabled: boolean;
+  days: TrialDay[];
+  baseline: { n: number; mean: number | null; se: number | null };
+  optimised: { n: number; mean: number | null; se: number | null };
+  saving_pence_per_degree_day?: number;
+  saving_pct?: number;
+  saving_se_pct?: number;
+  credible?: boolean;
+  note: string;
 }
 
 export interface TariffResult {
@@ -216,6 +233,7 @@ export interface TariffResult {
   annualised_pounds?: number;
   requires?: string[];
   note?: string;
+  rates_source?: string;
 }
 
 export interface TariffComparison {
@@ -231,6 +249,9 @@ export interface TariffComparison {
   actual?: { code: string; name: string; unit_pence: number; standing_pence: number; total_pence: number; kwh: number; prices_complete: boolean; effective_p_per_kwh: number; difference_vs_best_pence?: number; product?: string | null; on_cheapest?: boolean } | null;
   results: TariffResult[];
   caveats?: string[];
+  scenario?: { ev_kwh_per_day: number; battery_kwh_per_day: number };
+  annual?: { status: string; reason?: string; days?: number; kwh_per_day_no_heating?: number; kwh_per_degree_day?: number; annual_degree_days?: number; annual_kwh?: number; climate?: string; note?: string };
+  live_rates?: Record<string, string>;
 }
 
 export interface ControlStatus {
@@ -371,12 +392,13 @@ export const api = {
   heatLoss: (days = 14) => get<HeatLoss>(`/api/heat-loss?days=${days}`),
   heatPump: (days = 30) => get<HeatPump>(`/api/heat-pump?days=${days}`),
   accuracy: (days = 7) => get<ForecastAccuracy>(`/api/accuracy?days=${days}`),
-  tariffs: (days = 30) => get<TariffComparison>(`/api/tariffs?days=${days}`),
+  tariffs: (days = 30, ev = 0, battery = 0, live = false) => get<TariffComparison>(`/api/tariffs?days=${days}&ev_kwh_per_day=${ev}&battery_kwh_per_day=${battery}&live=${live}`),
+  trial: (days = 28) => get<TrialReport>(`/api/trial?days=${days}`),
   controlStatus: () => get<ControlStatus>("/api/control-status"),
   settings: () => get<SettingsDoc>("/api/settings"),
   saveSettings: (changes: Record<string, number | string | boolean | null>) => send<SettingsDoc>("PUT", "/api/settings", changes),
   preconditions: () => get<Preconditions>("/api/control-preconditions"),
-  climateEntities: () => get<{ entities: ClimateEntity[]; suggested: string | null }>("/api/climate-entities"),
+  climateEntities: () => get<{ entities: ClimateEntity[]; suggested: string | null; water_heaters?: ClimateEntity[] }>("/api/climate-entities"),
   resetSetting: (key?: string) => send<SettingsDoc>("POST", `/api/settings/reset${key ? `?key=${key}` : ""}`),
 };
 

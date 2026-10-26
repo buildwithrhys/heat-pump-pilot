@@ -86,6 +86,7 @@ class Signal(StrEnum):
     WEATHER_WIND_SPEED = "weather_wind_speed"  # m/s
     WEATHER_HUMIDITY = "weather_humidity"
     WEATHER_CLOUD_COVER = "weather_cloud_cover"
+    SOLAR_IRRADIANCE = "solar_irradiance"  # W/m2, from Open-Meteo
 
 
 class SignalKind(StrEnum):
@@ -274,6 +275,9 @@ SIGNAL_CATALOGUE: dict[Signal, SignalSpec] = {
                    hints=("openweathermap_humidity",), device_class="humidity"),
         SignalSpec(Signal.WEATHER_CLOUD_COVER, "percent", SignalKind.INSTANT, "Cloud cover",
                    hints=("openweathermap_cloud_coverage",)),
+        SignalSpec(Signal.SOLAR_IRRADIANCE, "W/m2", SignalKind.INSTANT, "Solar irradiance on a horizontal surface (Open-Meteo)",
+                   default_quality=Quality.MODEL_DERIVED, hints=("solar_irradiance", "global_horizontal_irradiance"),
+                   accept_units=("W/m²", "W/m2")),
     ]
 }
 

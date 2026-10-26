@@ -1,8 +1,9 @@
 """The one place PredHeat writes to Home Assistant.
 
 Kept separate from the read-only client on purpose: nothing else imports this
-module, and it offers exactly one capability, setting a climate entity's target
-temperature. Every call goes through ``Controller`` which logs it.
+module, and it offers exactly one capability, setting a target temperature on
+the climate entity or the water_heater entity the user named. Every call goes
+through ``Controller`` which logs it.
 """
 
 from __future__ import annotations
@@ -28,8 +29,9 @@ class HAControlAdapter:
                                                        "current_temperature": attrs.get("current_temperature"), "preset_mode": attrs.get("preset_mode")}
 
     async def set_target(self, entity_id: str, temperature: float) -> None:
-        r = await self.client._http.post("/api/services/climate/set_temperature",
-                                         json={"entity_id": entity_id, "temperature": round(temperature, 1)})
+        domain = entity_id.split(".", 1)[0]
+        service = "water_heater/set_temperature" if domain == "water_heater" else "climate/set_temperature"
+        r = await self.client._http.post(f"/api/services/{service}", json={"entity_id": entity_id, "temperature": round(temperature, 1)})
         r.raise_for_status()
 
 

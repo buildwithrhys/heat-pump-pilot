@@ -42,12 +42,12 @@ export default function ForecastPage() {
   return (
     <>
       <div className="section">
-        <h2>What PredHeat would do in the next 24 hours</h2>
+        <h2>What PredHeat would do in the next {t.optimisation.horizon_hours ?? 24} hours</h2>
         <PlanList plan={t.optimisation} />
       </div>
       {t.optimisation.predicted && t.optimisation.predicted.length > 0 && (
         <div className="section chart">
-          <h4>Predicted indoor temperature, next 24 hours (°C)</h4>
+          <h4>Predicted indoor temperature, next {t.optimisation.horizon_hours ?? 24} hours (°C)</h4>
           <div className="legend">
             <span style={{ "--c": css("--primary") } as React.CSSProperties}>With PredHeat's plan</span>
             <span title={GLOSSARY.plain_thermostat} style={{ "--c": css("--axis") } as React.CSSProperties}>With an ordinary thermostat<Term k="plain_thermostat" /></span>
@@ -63,6 +63,44 @@ export default function ForecastPage() {
             </LineChart>
           </ResponsiveContainer>
         </div>
+      )}
+      {t.optimisation.predicted && t.optimisation.predicted.length > 0 && (
+        <>
+          <div className="section chart">
+            <h4>Planned heat output per half hour (kW)<Term text="How hard the plan runs the heat pump in each half hour, against what an ordinary thermostat would do on the same house model." /></h4>
+            <div className="legend">
+              <span style={{ "--c": css("--primary") } as React.CSSProperties}>PredHeat's plan</span>
+              <span style={{ "--c": css("--axis") } as React.CSSProperties}>Ordinary thermostat</span>
+            </div>
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={t.optimisation.predicted.map((p) => ({ x: p.start, label: dayhh(p.start), plan: p.heat_kw, base: p.heat_kw_baseline }))} margin={{ top: 4, right: 12, left: 0, bottom: 0 }} barCategoryGap={1}>
+                <CartesianGrid vertical={false} stroke={grid} />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: ink2 }} tickFormatter={(v, i) => tickIf(t.optimisation.predicted!.map((p) => ({ x: p.start })))(i) ?? v} interval={0} axisLine={{ stroke: grid }} tickLine={false} />
+                <YAxis tickFormatter={(v) => `${v} kW`} tick={{ fontSize: 12, fill: ink2 }} axisLine={false} tickLine={false} width={48} />
+                <Tooltip formatter={(v, n) => [`${Number(v ?? 0).toFixed(1)} kW`, String(n) === "plan" ? "PredHeat's plan" : "Ordinary thermostat"]} labelFormatter={(_l, p) => (p?.[0] ? dayhh((p[0].payload as { x: string }).x) : "")} contentStyle={{ borderRadius: 8, fontSize: 13 }} cursor={{ fill: grid, opacity: 0.5 }} />
+                <Bar dataKey="base" fill={css("--axis")} fillOpacity={0.6} radius={[2, 2, 0, 0]} />
+                <Bar dataKey="plan" fill={css("--primary")} radius={[2, 2, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="section chart">
+            <h4>Cost per half hour (pence)<Term text="Electricity cost of the plan in each half hour at the price then. Pre-heating shows as spend in cheap slots that buys quiet in dear ones." /></h4>
+            <div className="legend">
+              <span style={{ "--c": css("--primary") } as React.CSSProperties}>PredHeat's plan</span>
+              <span style={{ "--c": css("--axis") } as React.CSSProperties}>Ordinary thermostat</span>
+            </div>
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={t.optimisation.predicted.map((p) => ({ x: p.start, label: dayhh(p.start), plan: p.cost_p, base: p.cost_p_baseline ?? 0 }))} margin={{ top: 4, right: 12, left: 0, bottom: 0 }} barCategoryGap={1}>
+                <CartesianGrid vertical={false} stroke={grid} />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: ink2 }} tickFormatter={(v, i) => tickIf(t.optimisation.predicted!.map((p) => ({ x: p.start })))(i) ?? v} interval={0} axisLine={{ stroke: grid }} tickLine={false} />
+                <YAxis tickFormatter={(v) => `${v}p`} tick={{ fontSize: 12, fill: ink2 }} axisLine={false} tickLine={false} width={40} />
+                <Tooltip formatter={(v, n) => [`${Number(v ?? 0).toFixed(1)}p`, String(n) === "plan" ? "PredHeat's plan" : "Ordinary thermostat"]} labelFormatter={(_l, p) => (p?.[0] ? dayhh((p[0].payload as { x: string }).x) : "")} contentStyle={{ borderRadius: 8, fontSize: 13 }} cursor={{ fill: grid, opacity: 0.5 }} />
+                <Bar dataKey="base" fill={css("--axis")} fillOpacity={0.6} radius={[2, 2, 0, 0]} />
+                <Bar dataKey="plan" fill={css("--primary")} radius={[2, 2, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </>
       )}
       <div className="note">
         The charts below are the inputs behind the plan: prices by certainty, weather and solar. Planned Intelligent Octopus dispatches are shown but never assumed to qualify until they start.

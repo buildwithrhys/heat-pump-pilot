@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     control_climate_entity: str | None = None  # e.g. climate.house_zone_1_circuit_0_climate
     control_max_offset_c: float = 1.0  # how far the setpoint may be moved either way
     control_override_hours: float = 4.0  # back off this long after a manual change
+    control_dhw_entity: str | None = None  # water_heater.* entity for hot water scheduling
+    control_dhw_boost_c: float = 5.0  # how far the cylinder target is raised during a planned reheat
+    trial_mode: bool = False  # alternate baseline and optimised days to measure the saving
 
     database_url: str = "sqlite:///./data/predheat.sqlite"
     timezone: str = "Europe/London"

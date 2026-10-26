@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, num, type HeatLoss, type HeatPump, type MappingSignal, type MappingView, type SystemHealth } from "../api";
+import { api, num, pounds, type HeatLoss, type HeatPump, type MappingSignal, type MappingView, type SystemHealth } from "../api";
 import { GLOSSARY, Term } from "../glossary";
 
 const QUALITY_LABEL: Record<string, [string, string]> = {
@@ -121,6 +121,9 @@ export default function SystemPage() {
               <div className="sub">positive means the model runs warm · mean absolute error {s.forecast_accuracy.mae_baseline_c?.toFixed(2)} °C</div>
             </div>
           </div>
+        )}
+        {s.forecast_accuracy.cost_backtest?.status === "ok" && (
+          <p style={{ fontSize: 13 }}>Cost check: the model expected the heating to cost {pounds(s.forecast_accuracy.cost_backtest.predicted_pence ?? 0)} over {s.forecast_accuracy.cost_backtest.slots} scored half-hours; it actually cost {pounds(s.forecast_accuracy.cost_backtest.actual_pence ?? 0)}{s.forecast_accuracy.cost_backtest.error_pct != null ? ` (${s.forecast_accuracy.cost_backtest.error_pct > 0 ? "+" : ""}${s.forecast_accuracy.cost_backtest.error_pct}%)` : ""}, using the prices PredHeat had at the time.<Term text="Scores the plan on what it knew when it was made: predicted thermostat cost per half hour against the heating electricity actually used, at the stored prices." /></p>
         )}
         {s.forecast_accuracy.note && <p className="muted" style={{ fontSize: 12 }}>{s.forecast_accuracy.note}</p>}
       </div>

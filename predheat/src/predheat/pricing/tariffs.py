@@ -116,3 +116,77 @@ def replay(template: TariffTemplate, intervals: list[tuple[datetime, datetime, f
             "total_pence": round(unit + standing, 1), "kwh": round(kwh, 2), "days": round(days, 2),
             "cheap_share": round(cheap_kwh / kwh, 3) if kwh and template.windows else None,
             "effective_p_per_kwh": round(unit / kwh, 2) if kwh else None}
+
+
+def scenario_intervals(template: TariffTemplate, intervals: list[tuple[datetime, datetime, float]], ev_kwh_per_day: float = 0.0,
+                       battery_kwh_per_day: float = 0.0) -> list[tuple[datetime, datetime, float]]:
+    """Adjust the consumption for what-ifs on this tariff.
+
+    EV: ``ev_kwh_per_day`` added in each day's cheapest slots (where you would charge).
+    Battery: ``battery_kwh_per_day`` moved from each day's dearest slots into its cheapest ones.
+    """
+    if ev_kwh_per_day <= 0 and battery_kwh_per_day <= 0:
+        return intervals
+    by_day: dict[Any, list[int]] = {}
+    for i, (start, _end, _k) in enumerate(intervals):
+        by_day.setdefault(start.astimezone(LONDON).date(), []).append(i)
+    rows = [list(x) for x in intervals]
+    per_slot_cap = 3.5  # kWh a 7 kW charger or inverter can move in half an hour
+    for idxs in by_day.values():
+        ranked = sorted(idxs, key=lambda i: (template.rate_at(rows[i][0]), rows[i][0]))
+        left = ev_kwh_per_day
+        for i in ranked:
+            if left <= 0:
+                break
+            add = min(per_slot_cap, left)
+            rows[i][2] += add
+            left -= add
+        shift = battery_kwh_per_day
+        dear = sorted(idxs, key=lambda i: (-template.rate_at(rows[i][0]), rows[i][0]))
+        taken = 0.0
+        for i in dear:
+            if taken >= shift:
+                break
+            t = min(rows[i][2], shift - taken)
+            rows[i][2] -= t
+            taken += t
+        left = taken
+        for i in ranked:
+            if left <= 0:
+                break
+            add = min(per_slot_cap, left)
+            rows[i][2] += add
+            left -= add
+    return [(a, b, k) for a, b, k in rows]
+
+
+def replay_with_book(book, template: TariffTemplate, intervals: list[tuple[datetime, datetime, float]], standing_p_per_day: float | None,
+                     ev_kwh_per_day: float = 0.0, battery_kwh_per_day: float = 0.0) -> dict[str, Any]:
+    """Replay on published half-hourly rates (a RateBook) rather than the template's windows."""
+    class _Shim:
+        windows = template.windows
+        default_rate_p = template.default_rate_p
+
+        @staticmethod
+        def rate_at(when):
+            r = book.rate_at(when)
+            return r.rate_p_per_kwh if r else template.rate_at(when)
+
+    rows = scenario_intervals(_Shim(), intervals, ev_kwh_per_day, battery_kwh_per_day)  # type: ignore[arg-type]
+    unit = kwh = cheap = 0.0
+    rates_seen = []
+    for start, end, k in rows:
+        r = book.rate_at(start)
+        rate = r.rate_p_per_kwh if r else template.rate_at(start)
+        rates_seen.append(rate)
+        unit += k * rate
+        kwh += k
+    if rates_seen:
+        lo = min(rates_seen)
+        cheap_cut = lo + 0.25 * (max(rates_seen) - lo)
+        cheap = sum(k for (st, _e, k), rate in zip(rows, rates_seen) if rate <= cheap_cut)
+    days = (max(e for _, e, _ in rows) - min(s for s, _, _ in rows)).total_seconds() / 86400 if rows else 0.0
+    standing = (standing_p_per_day if standing_p_per_day is not None else template.standing_p_per_day) * days
+    return {"code": template.code, "name": template.name, "unit_pence": round(unit, 1), "standing_pence": round(standing, 1),
+            "total_pence": round(unit + standing, 1), "kwh": round(kwh, 2), "days": round(days, 2),
+            "cheap_share": round(cheap / kwh, 3) if kwh else None, "effective_p_per_kwh": round(unit / kwh, 2) if kwh else None}

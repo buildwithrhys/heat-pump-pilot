@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- The plan now runs 48 hours ahead when prices allow, and every recorded plan is backtested: the cost the model expected for the heating is compared with what it actually cost at the prices PredHeat had at the time. The result sits under Forecast accuracy on System health.
+- Forecast tab shows the planned heat output and the cost per half hour against an ordinary thermostat.
+- Hot water control: choose a water_heater entity on Settings and PredHeat raises the cylinder target during a planned reheat and restores it afterwards, under the same guards and the same log.
+- Trial mode: alternates whole days between PredHeat acting and your ordinary thermostat, and reports the heating cost per degree-day for each group with a margin of error, so the saving is measured rather than claimed. On the Energy costs tab.
+- Tariffs tab: EV charging and home battery what-ifs; "Use published rates for my region" fetches current unit rates and standing charges from the Octopus API for each tariff (no account needed) and makes Agile replayable; a typical-year estimate of annual consumption from your own data and the climate of your area, used for the "year at this rate" figures.
+- Open-Meteo irradiance (no key) feeds the house model's solar term when the home location is known.
+
 ## 0.2.4
 
 - Every tab passed against the "no unanswered questions" rule: each number carries its unit and period in plain words, technical units are translated with the technical form in a tooltip, badges say why they are there, unknown states say what they are waiting for, and every technical term has a tooltip drawn from one glossary. The list of what changed and why is in `docs/ui-audit-2026-10-26.md`; the rule itself is in `CLAUDE.md` and governs future UI work.

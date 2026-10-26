@@ -196,6 +196,14 @@ def create_app(settings: Settings | None = None, platform: Platform | None = Non
             await p.release_control("control switched off" if not p.settings.control_enabled else f"operating mode changed to {p.settings.operating_mode.value}")
         return p.settings_store.describe(p.settings)
 
+    @app.get("/api/trial")
+    async def trial(days: int = Query(28, ge=7, le=120)):
+        p = plat()
+        from ..db import session_scope
+
+        with session_scope(p.settings.database_url) as s:
+            return p.trial_report(s, days=days)
+
     @app.get("/api/control-preconditions")
     async def control_preconditions():
         p = plat()
@@ -255,13 +263,20 @@ def create_app(settings: Settings | None = None, platform: Platform | None = Non
             raise HTTPException(400, str(exc)) from exc
 
     @app.get("/api/tariffs")
-    async def tariffs(days: int = Query(30, ge=7, le=365)):
-        """Replay stored consumption on tariff templates. Read-only, indicative."""
+    async def tariffs(days: int = Query(30, ge=7, le=365), ev_kwh_per_day: float = Query(0.0, ge=0, le=100), battery_kwh_per_day: float = Query(0.0, ge=0, le=100),
+                      live: bool = Query(False)):
+        """Replay stored consumption on tariff templates, with EV and battery what-ifs. ``live=true`` first
+        fetches published rates for your region from the Octopus API (no key needed)."""
         p = plat()
         from ..db import session_scope
 
         with session_scope(p.settings.database_url) as s:
-            return p.compare_tariffs(s, days=days)
+            if live and p.octopus_api is not None and not p.last_poll.get("live_rates"):
+                try:
+                    await p.refresh_live_rates(s, days)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("live rates unavailable: %s", exc)
+            return p.compare_tariffs(s, days=days, ev_kwh_per_day=ev_kwh_per_day, battery_kwh_per_day=battery_kwh_per_day)
 
     @app.get("/api/control-status")
     async def control_status():

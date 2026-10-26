@@ -4,9 +4,12 @@ import { Term } from "../glossary";
 
 export default function TariffsPage() {
   const [days, setDays] = useState(30);
+  const [ev, setEv] = useState(0);
+  const [battery, setBattery] = useState(0);
+  const [live, setLive] = useState(false);
   const [t, setT] = useState<TariffComparison | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { setT(null); api.tariffs(days).then(setT).catch((e) => setErr(String(e))); }, [days]);
+  useEffect(() => { setT(null); api.tariffs(days, ev, battery, live).then(setT).catch((e) => setErr(String(e))); }, [days, ev, battery, live]);
   if (err) return <p className="err">{err}</p>;
   if (!t) return <p className="muted">Loading…</p>;
   if (t.status === "implausible") return <div className="note urgent">{t.reason}</div>;
@@ -18,8 +21,14 @@ export default function TariffsPage() {
         <label>Replay <select value={days} onChange={(e) => setDays(+e.target.value)}>
           <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option><option value={365}>Last year</option>
         </select></label>
-        <span className="muted">{num(t.kwh, 0, " kWh")} of {t.source === "whole_home_import" ? "whole-home import" : "heat pump electricity only"} · rates {t.rates_as_of}{t.region ? ` · your region ${t.region}${t.region_name ? ` (${t.region_name})` : ""}` : ""}</span>
+        <label>EV charging <input type="number" min={0} max={60} step={1} value={ev} onChange={(e) => setEv(Number(e.target.value) || 0)} style={{ width: 70, height: 38, borderRadius: 8, border: "1px solid var(--border)", padding: "0 8px", font: "inherit" }} /> kWh a day<Term text="What-if: adds this much charging in each day's cheapest slots on every tariff, where an EV would be scheduled to charge." /></label>
+        <label>Battery <input type="number" min={0} max={40} step={1} value={battery} onChange={(e) => setBattery(Number(e.target.value) || 0)} style={{ width: 70, height: 38, borderRadius: 8, border: "1px solid var(--border)", padding: "0 8px", font: "inherit" }} /> kWh a day shifted<Term text="What-if: moves this much of each day's use from the dearest slots to the cheapest ones, as a home battery would." /></label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6 }}><input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} /> Use published rates for my region<Term text="Fetches each tariff's current unit rates for your region from Octopus (no account needed) and makes Agile replayable. Takes a few seconds the first time." /></label>
+        <span className="muted">{num(t.kwh, 0, " kWh")} of {t.source === "whole_home_import" ? "whole-home import" : "heat pump electricity only"} · rates {Object.keys(t.live_rates ?? {}).length ? "published for your region" : t.rates_as_of}{t.region ? ` · your region ${t.region}${t.region_name ? ` (${t.region_name})` : ""}` : ""}</span>
       </div>
+      {t.annual?.status === "ok" && (
+        <p className="sources-line">A typical year for {t.annual.climate}: about {num(t.annual.annual_kwh, 0, " kWh")} of electricity, of which {num((t.annual.kwh_per_day_no_heating ?? 0) * 365, 0, " kWh")} is not weather-related. The "year at this rate" figures use it.<Term text={t.annual.note ?? ""} /></p>
+      )}
       {t.actual && !t.actual.prices_complete && (
         <div className="note warn">Some half-hourly prices for this period are missing, so "What you paid" is understated and the comparison against it is unreliable. The replays on the right are unaffected.</div>
       )}
@@ -66,7 +75,7 @@ export default function TariffsPage() {
                   ) : (
                     <td colSpan={5} className="muted">Needs Octopus API data, coming in a later release</td>
                   )}
-                  <td className="muted" style={{ fontSize: 12 }}>{r.requires && r.requires.length > 0 ? `Needs ${r.requires.join(", ").replace("_", " ")}. ` : ""}{r.note}</td>
+                  <td className="muted" style={{ fontSize: 12 }}>{r.requires && r.requires.length > 0 ? `Needs ${r.requires.join(", ").replace("_", " ")}. ` : ""}{r.note}{r.rates_source === "octopus_api" ? <span className="tag measured">published rates</span> : null}</td>
                 </tr>
               ))}
             </tbody>

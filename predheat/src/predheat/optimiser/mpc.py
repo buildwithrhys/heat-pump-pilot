@@ -146,6 +146,7 @@ def optimise(inp: MPCInputs) -> dict[str, Any]:
     for k, s in enumerate(slots):
         s["t_in_baseline"] = round(base_t[k], 2)
         s["heat_kw_baseline"] = round(base_q[k], 2)
+        s["cost_p_baseline"] = round(base_q[k] / inp.cop_fn(inp.t_out[k]) * STEP_H * inp.rate_p[k], 2)
     return {"status": "model_based", "slots": slots, "cost_p": round(cost, 1), "baseline_cost_p": round(base_cost, 1),
             "comfort_band": [lo, hi]}
 
@@ -263,12 +264,15 @@ def build_mpc_plan(inp: MPCInputs, now: datetime, model_notes: list[str] | None 
         "The comparison is the same house with an ordinary on/off thermostat, so the saving is like for like.",
     ] + list(model_notes or [])
     predicted = [{"start": s["start"].isoformat(), "t_in": s["t_in"], "t_in_baseline": s["t_in_baseline"], "heat_kw": s["heat_kw"],
-                  "heat_kw_baseline": s["heat_kw_baseline"], "rate_p": s["rate_p"], "t_out": s["t_out"], "cost_p": s["cost_p"], "mode": modes[k]}
+                  "heat_kw_baseline": s["heat_kw_baseline"], "rate_p": s["rate_p"], "t_out": s["t_out"], "cost_p": s["cost_p"],
+                  "cost_p_baseline": s["cost_p_baseline"], "elec_kwh": s["elec_kwh"], "mode": modes[k]}
                  for k, s in enumerate(slots)]
+    hours = len(slots) * STEP_H
     return {**base, "status": "model_based",
-            "reason": f"Optimised space heating costs about {cost / 100:.2f} GBP over the next 24 hours against {base_cost / 100:.2f} GBP for a plain thermostat.",
+            "reason": f"Optimised space heating costs about £{cost / 100:.2f} over the next {hours:.0f} hours against £{base_cost / 100:.2f} with an ordinary thermostat.",
+            "horizon_hours": hours,
             "actions": [a.as_dict() for a in actions],
-            "next_action": _next(upcoming, now) if upcoming else {"kind": "none", "reason": "Hold the setpoint; nothing worth shifting."},
+            "next_action": _next(upcoming, now) if upcoming else {"kind": "none", "reason": "Hold the setpoint; nothing worth shifting in the plan."},
             "assumptions": assumptions, "predicted": predicted,
             "cost": {"optimised_p": cost, "baseline_p": base_cost, "saving_p": round(base_cost - cost, 1)}}
 

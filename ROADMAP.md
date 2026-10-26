@@ -1,6 +1,6 @@
 # Roadmap
 
-Status at 0.2.0 (26 October 2026): Phases 0 to 6 have working software in the add-on. Phase 2 reports, Phase 3 models, the Phase 4 optimiser, Phase 5 control and Phase 6 replay are all first implementations that now need live running time against the pilot to earn their exit criteria; the exit tests below remain the bar. Phase 7 is commercial work, not code.
+Status at 0.3.0 (26 October 2026): everything in Phases 0 to 6 that can be built without live running time is built: mapping overrides, 60-day backfill, smart-meter half-hourly import, retention, Octopus API rates and Open-Meteo irradiance, period reports and CSV, the learned house and heat pump models, the 48-hour optimiser with backtesting, guarded control of the zone and the hot water with alternating-day trials, tariff replay with EV and battery scenarios and an annual estimate. What remains needs weeks on the pilot: the model exit criteria (0.5 °C), the trial's saving with a credible margin, and the Vaillant-specific checks (quick veto duration, EnergyPLUS or EEBUS ownership). Phase 7 is commercial work and is not planned.
 
 Each phase ends with working software and a milestone report covering what was implemented, tested, works, remains unverified, and what blocks the next step. Live equipment control is impossible before Phase 5 and remains off by default afterwards.
 

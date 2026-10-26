@@ -8,7 +8,7 @@ const GROUPS: { key: "control" | "comparisons" | "advanced"; title: string; blur
   { key: "advanced", title: "Advanced", blurb: "Rarely needed." },
 ];
 const ORDER: Record<string, string[]> = {
-  control: ["control_enabled", "control_climate_entity", "operating_mode", "control_max_offset_c"],
+  control: ["control_enabled", "control_climate_entity", "control_dhw_entity", "operating_mode", "control_max_offset_c", "trial_mode"],
   comparisons: ["gas_price_p_per_kwh", "boiler_efficiency", "survey_heat_loss_kw", "survey_outdoor_c", "heat_pump_rated_kw"],
   advanced: ["design_outdoor_c"],
 };
@@ -17,6 +17,7 @@ export default function SettingsPage() {
   const [doc, setDoc] = useState<SettingsDoc | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [entities, setEntities] = useState<ClimateEntity[]>([]);
+  const [heaters, setHeaters] = useState<ClimateEntity[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [savedKey, setSavedKey] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Preconditions | null>(null);
@@ -30,7 +31,7 @@ export default function SettingsPage() {
   };
   useEffect(() => {
     api.settings().then(adopt).catch((e) => setErr(String(e)));
-    api.climateEntities().then((r) => setEntities(r.entities)).catch(() => setEntities([]));
+    api.climateEntities().then((r) => { setEntities(r.entities); setHeaters(r.water_heaters ?? []); }).catch(() => setEntities([]));
   }, []);
   if (err && !doc) return <p className="err">{err}</p>;
   if (!doc) return <p className="muted">Loading…</p>;
@@ -79,7 +80,7 @@ export default function SettingsPage() {
   const field = (key: string) => {
     const f = doc.fields[key];
     if (!f) return null;
-    if (f.type === "bool") {
+    if (f.type === "bool" && key === "control_enabled") {
       return (
         <div className="card" key={key}>
           <h3>{f.label}<Saved k={key} /></h3>
@@ -92,14 +93,30 @@ export default function SettingsPage() {
       );
     }
     if (f.type === "entity") {
+      const isDhw = key === "control_dhw_entity";
+      const list = isDhw ? heaters : entities;
+      const value = (doc.values[key] as string | null) ?? "";
       return (
         <div className="card" key={key}>
           <h3>{f.label}<Saved k={key} /></h3>
-          <select value={entity ?? ""} onChange={(e) => commit(key, e.target.value || null)} style={{ width: "100%" }}>
-            <option value="">{entities.length ? "Choose a heating zone" : "No climate entities found yet"}</option>
-            {entities.map((e) => <option key={e.entity_id} value={e.entity_id}>{e.name}{e.platform === "mypyllant" ? " (myVAILLANT)" : ""} · {e.entity_id}</option>)}
+          <select value={value} onChange={(e) => commit(key, e.target.value || null)} style={{ width: "100%" }}>
+            <option value="">{list.length ? (isDhw ? "None (hot water not controlled)" : "Choose a heating zone") : (isDhw ? "No water heater entities found yet" : "No climate entities found yet")}</option>
+            {list.map((e) => <option key={e.entity_id} value={e.entity_id}>{e.name}{e.platform === "mypyllant" ? " (myVAILLANT)" : ""} · {e.entity_id}</option>)}
           </select>
-          <div className="sub" style={{ marginTop: 8 }}>{f.help}{entities.length === 0 ? " PredHeat lists the climate entities it finds in Home Assistant after its first collection." : ""}</div>
+          <div className="sub" style={{ marginTop: 8 }}>{f.help}{list.length === 0 ? " PredHeat lists the entities it finds in Home Assistant after its first collection." : ""}</div>
+        </div>
+      );
+    }
+    if (f.type === "bool") {
+      const on = !!doc.values[key];
+      return (
+        <div className="card" key={key}>
+          <h3>{f.label}<Saved k={key} /></h3>
+          <label style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
+            <span className={`switch ${on ? "on" : ""}`} role="switch" aria-checked={on} tabIndex={0} onClick={() => commit(key, !on)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") commit(key, !on); }} />
+            <span style={{ fontSize: 20, fontWeight: 300 }}>{on ? "On" : "Off"}</span>
+          </label>
+          <div className="sub" style={{ marginTop: 8 }}>{f.help}</div>
         </div>
       );
     }

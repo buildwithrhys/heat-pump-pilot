@@ -39,6 +39,10 @@ FIELDS: dict[str, dict[str, Any]] = {
                             "label": "Gas unit price", "help": "Used only for the \"same heat on gas\" comparison. Your gas unit rate including VAT."},
     "boiler_efficiency": {"type": "number", "default": 0.85, "min": 0.5, "max": 1.0, "step": 0.01, "unit": "", "group": "comparisons",
                           "label": "Gas boiler efficiency", "help": "Seasonal efficiency the comparison assumes. 0.85 suits a modern condensing boiler; older ones are nearer 0.75."},
+    "control_dhw_entity": {"type": "entity", "default": None, "optional": True, "group": "control", "label": "Hot water entity (optional)",
+                           "help": "The water_heater entity for the cylinder. When set, PredHeat raises its target during a planned reheat and restores it afterwards."},
+    "trial_mode": {"type": "bool", "default": False, "group": "control", "label": "Trial: alternate days",
+                   "help": "Alternates whole days between PredHeat acting and your ordinary thermostat, so the saving can be measured fairly. Results appear on the Energy costs tab after a couple of weeks."},
     "control_max_offset_c": {"type": "number", "default": 1.0, "min": 0.0, "max": 2.0, "step": 0.5, "unit": "°C", "group": "control",
                              "label": "Maximum setpoint offset", "help": "How far PredHeat may move your setpoint either way when control is on. Max savings uses one and a half times this, capped at 2 °C."},
     "design_outdoor_c": {"type": "number", "default": None, "min": -10.0, "max": 5.0, "step": 0.5, "unit": "°C", "optional": True, "group": "advanced",
@@ -50,7 +54,7 @@ FIELDS: dict[str, dict[str, Any]] = {
     "heat_pump_rated_kw": {"type": "number", "default": None, "min": 1.0, "max": 50.0, "step": 0.5, "unit": "kW", "optional": True, "group": "comparisons",
                            "label": "Heat pump rated output", "help": "Nameplate heating output, for example 7 for an aroTHERM plus 7 kW. Used to show the margin over your heat loss."},
 }
-OPTION_KEYS = ("control_enabled", "control_climate_entity", "operating_mode", "control_max_offset_c",
+OPTION_KEYS = ("control_enabled", "control_climate_entity", "control_dhw_entity", "trial_mode", "operating_mode", "control_max_offset_c",
                "gas_price_p_per_kwh", "boiler_efficiency", "survey_heat_loss_kw", "survey_outdoor_c", "heat_pump_rated_kw",
                "design_outdoor_c")
 # keys that older releases held in the Supervisor options file
@@ -83,7 +87,11 @@ def validate(key: str, value: Any) -> Any:
             return None
         v = str(value).strip()
         if "." not in v or not v.startswith(("climate.", "water_heater.")):
-            raise SettingsError(f"{key} must be a climate entity id such as climate.living_room")
+            raise SettingsError(f"{key} must be a climate or water_heater entity id such as climate.living_room")
+        if key == "control_climate_entity" and not v.startswith("climate."):
+            raise SettingsError("the climate entity must be a climate.* entity")
+        if key == "control_dhw_entity" and not v.startswith("water_heater."):
+            raise SettingsError("the hot water entity must be a water_heater.* entity")
         return v
     if value in (None, "") and spec.get("optional"):
         return None
@@ -145,6 +153,8 @@ class SettingsStore:
         """Push the stored values onto the live Settings object the platform uses."""
         settings.control_enabled = bool(self.values.get("control_enabled", False))
         settings.control_climate_entity = self.values.get("control_climate_entity")
+        settings.control_dhw_entity = self.values.get("control_dhw_entity")
+        settings.trial_mode = bool(self.values.get("trial_mode", False))
         settings.operating_mode = OperatingMode(self.values["operating_mode"])
         settings.gas_price_p_per_kwh = float(self.values["gas_price_p_per_kwh"])
         settings.boiler_efficiency = float(self.values["boiler_efficiency"])

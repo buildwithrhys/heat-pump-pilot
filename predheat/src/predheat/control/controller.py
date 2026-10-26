@@ -53,6 +53,17 @@ class Controller:
     override_until: datetime | None = None
     last_change_at: datetime | None = None
     history: list[ControlDecision] = field(default_factory=list)
+    # hot water
+    dhw_baseline_c: float | None = None
+    dhw_holding: bool = False
+    dhw_last_change_at: datetime | None = None
+
+    @staticmethod
+    def trial_day_is_baseline(now: datetime) -> bool:
+        """In trial mode, even days (by ordinal, local date) run the ordinary thermostat."""
+        from ..timeutils import LONDON
+
+        return now.astimezone(LONDON).date().toordinal() % 2 == 0
 
     # ------------------------------------------------------------------ guards
     def configured(self) -> tuple[bool, str]:
@@ -89,12 +100,20 @@ class Controller:
             return self._log(s, now, ControlDecision(False, "released", f"manual change detected (target {current} degC); backing off for {self.settings.control_override_hours:g} h", previous_c=current), entity)
         if self.override_until and now < self.override_until:
             return self._log(s, now, ControlDecision(False, "blocked", f"manual override in force until {self.override_until.isoformat(timespec='minutes')}"), entity, quiet=True)
+        if self.settings.trial_mode and self.trial_day_is_baseline(now):
+            d = await self._release_if_holding(s, now, "trial: baseline day, ordinary thermostat in charge")
+            await self._dhw_release(s, now, "trial: baseline day")
+            return d
         if plan.get("status") != "model_based":
             return await self._release_if_holding(s, now, "blocked: plan is not model-based yet")
         if model_confidence is None or model_confidence < 0.5:
             return await self._release_if_holding(s, now, f"blocked: building model confidence {0 if model_confidence is None else model_confidence:.0%} is below 50%")
         if indoor_c is None or indoor_age is None or indoor_age > timedelta(minutes=30):
             return await self._release_if_holding(s, now, "blocked: indoor temperature reading is missing or stale")
+        try:
+            await self._dhw_step(s, now, plan)
+        except Exception as exc:  # noqa: BLE001
+            self._log(s, now, ControlDecision(False, "failed", f"hot water: {exc}"), self.settings.control_dhw_entity)
         if not self.holding:
             self.baseline_setpoint_c = current
         base = self.baseline_setpoint_c if self.baseline_setpoint_c is not None else (plan.get("model") or {}).get("setpoint_c", 21.0)
@@ -118,7 +137,50 @@ class Controller:
         return self._log(s, now, ControlDecision(True, "holding" if self.holding else "idle", f"set {entity} to {target} degC for '{mode}' (occupant setpoint {base} degC)", target_c=target, previous_c=current, mode=mode), entity)
 
     async def release(self, s, now: datetime, reason: str = "released") -> ControlDecision:
+        await self._dhw_release(s, now, reason)
         return await self._release_if_holding(s, now, reason)
+
+    # ------------------------------------------------------------------ hot water
+    def _dhw_action_now(self, plan: dict[str, Any], now: datetime) -> bool:
+        for a in plan.get("actions", []):
+            if a.get("kind") == "heat_hot_water" and datetime.fromisoformat(a["start"]) <= now < datetime.fromisoformat(a["end"]):
+                return True
+        return False
+
+    async def _dhw_step(self, s, now: datetime, plan: dict[str, Any]) -> None:
+        entity = self.settings.control_dhw_entity
+        if not entity:
+            return
+        wanted = self._dhw_action_now(plan, now)
+        current, _ = await self.adapter.current_target(entity)
+        if self.dhw_holding and self.dhw_baseline_c is not None and current is not None and self.dhw_last_change_at and \
+                abs(current - (self.dhw_baseline_c + self.settings.control_dhw_boost_c)) > 0.05:
+            self.dhw_holding = False  # someone changed it; leave it alone
+            self.dhw_baseline_c = None
+            self._log(s, now, ControlDecision(False, "released", f"hot water target changed by hand to {current} °C; leaving it"), entity)
+            return
+        if wanted and not self.dhw_holding:
+            if current is None:
+                return
+            if self.dhw_last_change_at and now - self.dhw_last_change_at < timedelta(minutes=25):
+                return
+            target = round(current + self.settings.control_dhw_boost_c, 1)
+            await self.adapter.set_target(entity, target)
+            self.dhw_baseline_c, self.dhw_holding, self.dhw_last_change_at = current, True, now
+            self._log(s, now, ControlDecision(True, "holding", f"raised hot water target on {entity} to {target} °C for the planned reheat (was {current} °C)", target_c=target, previous_c=current, mode="heat_hot_water"), entity)
+        elif not wanted and self.dhw_holding:
+            await self._dhw_release(s, now, "planned reheat finished")
+
+    async def _dhw_release(self, s, now: datetime, reason: str) -> None:
+        entity = self.settings.control_dhw_entity
+        if not (self.dhw_holding and entity and self.dhw_baseline_c is not None):
+            return
+        try:
+            await self.adapter.set_target(entity, self.dhw_baseline_c)
+            self._log(s, now, ControlDecision(True, "released", f"{reason}; hot water target restored to {self.dhw_baseline_c} °C", target_c=self.dhw_baseline_c), entity)
+        except Exception as exc:  # noqa: BLE001
+            self._log(s, now, ControlDecision(False, "failed", f"{reason}; restoring hot water target failed: {exc}"), entity)
+        self.dhw_holding, self.dhw_baseline_c, self.dhw_last_change_at = False, None, now
 
     # ------------------------------------------------------------------ helpers
     async def _release_if_holding(self, s, now: datetime, reason: str) -> ControlDecision:
@@ -161,4 +223,6 @@ class Controller:
                 "occupant_setpoint_c": self.baseline_setpoint_c, "commanded_c": self.last_commanded_c,
                 "override_until": self.override_until.isoformat() if self.override_until else None,
                 "last": {"status": last.status, "reason": last.reason, "target_c": last.target_c, "mode": last.mode} if last else None,
-                "max_offset_c": self.settings.control_max_offset_c, "mode": self.settings.operating_mode.value}
+                "max_offset_c": self.settings.control_max_offset_c, "mode": self.settings.operating_mode.value,
+                "hot_water": {"entity": self.settings.control_dhw_entity, "holding": self.dhw_holding, "baseline_c": self.dhw_baseline_c},
+                "trial_mode": self.settings.trial_mode}
