@@ -49,7 +49,8 @@ def test_migration_from_options_once(tmp_path: Path):
     opts.write_text(json.dumps({"operating_mode": "shadow", "gas_price_p_per_kwh": 5.5, "boiler_efficiency": 0.8,
                                 "control_max_offset_c": 1.5, "data_mode": "home_assistant"}))
     st = SettingsStore.load(tmp_path, opts)
-    assert st.values == {"operating_mode": "shadow", "gas_price_p_per_kwh": 5.5, "boiler_efficiency": 0.8, "control_max_offset_c": 1.5}
+    assert {k: st.values[k] for k in ("operating_mode", "gas_price_p_per_kwh", "boiler_efficiency", "control_max_offset_c")} == {
+        "operating_mode": "shadow", "gas_price_p_per_kwh": 5.5, "boiler_efficiency": 0.8, "control_max_offset_c": 1.5}
     assert st.migrated_from_options
     s = Settings(data_mode=DataMode.SIMULATED)
     st.update({"gas_price_p_per_kwh": 9.0}, s)

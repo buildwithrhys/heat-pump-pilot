@@ -47,7 +47,7 @@ export default function CostsPage() {
       </div>
 
       <div className="section">
-        <EnergyFlow costs={s} title={`Electricity in, heat out, last ${days} days`} />
+        <EnergyFlow costs={s} title={`Where the heat pump's energy came from and went, last ${days} days`} days={days} />
       </div>
 
       <div className="section chart">

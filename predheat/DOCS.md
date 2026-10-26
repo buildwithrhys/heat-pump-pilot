@@ -26,13 +26,11 @@ The API that feeds the dashboard is documented at `/docs` on the same page addre
 
 ## The heat loss figure
 
-PredHeat fits a single-zone building model to the last 14 days of indoor temperature, outdoor temperature and heat delivered for space heating. It reports:
+PredHeat fits a single-zone building model to the last 14 days of indoor temperature, outdoor temperature and heat delivered for space heating. Until the fit reaches 30% confidence, the card says "Waiting for data" and tells you what it is waiting for, how many of the usual seven days it has, and when to expect a figure. Mild weeks with little heating are the usual reason for waiting; the first cold nights fix it.
 
-- **Heat loss** in watts per degree of indoor-to-outdoor difference, with a range. The "about x kW" line is that figure at 21 °C inside and -2 °C outside, the usual design condition for UK heat pump sizing, so you can compare it with your installer's survey.
-- **How quickly it cools**, the time constant in hours, and how much heat the fabric stores per degree.
-- **Based on**, how many half-hours of data were usable and any caveats, such as too little temperature variation to pin the number down.
+Once learned, the headline is kilowatts at the design outdoor temperature for your region, the way an installer's survey quotes it, with 21 °C inside, plus the likely range. Enter your surveyed figure in Settings and the two are shown side by side; a difference over 25% is flagged, because it usually means either the survey or the sensor placement deserves a look. Enter the heat pump's rated output and the card says how much margin it has. "How fast it cools" is the indoor temperature drop per hour with the heating off at 5 °C outside. The watts-per-degree figure, time constant and thermal capacity are on the System health tab under Learned models.
 
-It needs at least one full day of data before it reports, and the range narrows as days accumulate and weather varies. Mild weeks with little heating give wide ranges; cold snaps tighten them.
+Efficiency is the observed average COP over the period, the heat delivered divided by the electricity used from the controller's own counters, shown separately for space heating and hot water with the outdoor range it covers. It can differ from the Vaillant app because the period, the split by end use and the absence of normalisation differ.
 
 ## What PredHeat would do
 
@@ -75,6 +73,9 @@ Every proposal, change, failure and release is written to the control log, and t
 | Operating mode | Monitor | Monitor, Shadow, Balanced or Max savings. The controlling modes are greyed out until Allow control and a climate entity are set in the Configuration tab. |
 | Maximum setpoint offset | 1.0 °C | How far PredHeat may move your setpoint either way. |
 | Gas unit price, boiler efficiency | 6.24p, 0.85 | For the "same heat on gas" comparison. |
+| Design outdoor temperature | from your region | The outdoor temperature heat loss is quoted at. |
+| Surveyed heat loss and its outdoor temperature | empty | From your installer's survey; used as a starting point and shown beside the learned figure. |
+| Heat pump rated output | empty | Nameplate kW, to show the margin over your heat loss. |
 
 The home location and time zone come from Home Assistant. Values you had set for the moved options in an earlier release are copied into the Settings tab once on the first start after upgrading.
 

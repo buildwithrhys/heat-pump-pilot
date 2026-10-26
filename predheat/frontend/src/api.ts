@@ -110,19 +110,76 @@ export interface ShadowPlan {
   model?: Record<string, string | number | null> | null;
 }
 
-export interface HeatPump {
-  status: "ok" | "early" | "prior";
-  cop_at_7: number;
-  cop_at_2: number;
-  cop_at_minus_2: number;
-  slope_per_degc: number;
-  observed_mean_cop: number | null;
+export interface SurveyInfo { kw: number; outdoor_c: number; ua_w_per_k: number; kw_at_design: number }
+
+export interface HeatLoss {
+  status: "ok" | "waiting";
+  reason?: string;
   samples: number;
+  days_with_data: number;
+  days_needed: number;
+  lookback_days: number;
+  window_start: string;
+  window_end: string;
+  design_outdoor_c: number;
+  design_indoor_c: number;
+  design_region: string;
+  survey: SurveyInfo | null;
+  outdoor_range_c: number[] | null;
+  heating_hours: number;
+  rated_kw: number | null;
+  heat_loss_w_per_k?: number;
+  ci_low_w_per_k?: number;
+  ci_high_w_per_k?: number;
+  design_kw?: number;
+  design_kw_low?: number;
+  design_kw_high?: number;
+  capacity_kwh_per_k?: number | null;
+  time_constant_h?: number | null;
+  cooling_rate_c_per_h_at_5c?: number | null;
+  internal_gain_kw?: number | null;
+  confidence?: number;
+  survey_difference_pct?: number;
+  survey_disagrees?: boolean;
+  rated_margin_kw?: number;
+  notes?: string[];
+}
+
+export interface EndUseEfficiency {
+  label: string;
+  status: "ok" | "waiting";
+  reason?: string;
+  observed_cop: number | null;
+  kwh_electric: number;
+  kwh_heat: number;
+  running_hours: number;
+  days_with_data: number;
+  outdoor_range_c: number[] | null;
+  cop_at_7: number | null;
+  cop_at_minus_2: number | null;
+  slope_per_degc: number;
+  model_confidence: number;
+  normalised_note?: string;
+  notes: string[];
+}
+
+export interface HeatPump {
+  status: "ok" | "waiting";
+  lookback_days: number;
+  heating: EndUseEfficiency;
+  hot_water: EndUseEfficiency;
+  observed_mean_cop: number | null;
+  cop_at_7: number | null;
+  cop_at_minus_2: number | null;
+  samples: number;
+  days_with_data: number;
   confidence: number;
-  rmse: number | null;
   t_range: (number | null)[];
   capacity_kw: number;
   capacity_source: string;
+  rated_kw: number | null;
+  reason?: string | null;
+  why_differs: string;
   notes: string[];
 }
 
@@ -139,24 +196,6 @@ export interface ForecastAccuracy {
   meets_target?: boolean;
   by_run?: { issued_at: string; points: number; rmse_baseline_c: number; bias_baseline_c: number }[];
   note?: string;
-}
-
-export interface HeatLoss {
-  status: "ok" | "learning" | "insufficient_data" | "not_identified";
-  reason?: string;
-  samples: number;
-  window_start: string;
-  window_end: string;
-  heat_loss_w_per_k?: number;
-  ci_low_w_per_k?: number | null;
-  ci_high_w_per_k?: number | null;
-  design_kw_at_minus_2?: number;
-  capacity_kwh_per_k?: number | null;
-  time_constant_h?: number | null;
-  internal_gain_kw?: number | null;
-  confidence?: number;
-  survey_w_per_k?: number | null;
-  notes?: string[];
 }
 
 export interface TariffResult {
@@ -206,7 +245,8 @@ export interface ControlStatus {
 
 export interface SettingsField {
   type: "enum" | "number";
-  default: number | string;
+  default: number | string | null;
+  optional?: boolean;
   choices?: string[];
   labels?: Record<string, string>;
   min?: number;
@@ -218,7 +258,7 @@ export interface SettingsField {
 }
 
 export interface SettingsDoc {
-  values: Record<string, number | string>;
+  values: Record<string, number | string | null>;
   fields: Record<string, SettingsField>;
   gate: { allow_control: boolean; climate_entity: string | null; control_possible: boolean; message: string | null };
   effective: { operating_mode: string; control_enabled: boolean; climate_entity: string | null; data_mode: string };
@@ -294,7 +334,7 @@ export const api = {
   tariffs: (days = 30) => get<TariffComparison>(`/api/tariffs?days=${days}`),
   controlStatus: () => get<ControlStatus>("/api/control-status"),
   settings: () => get<SettingsDoc>("/api/settings"),
-  saveSettings: (changes: Record<string, number | string>) => send<SettingsDoc>("PUT", "/api/settings", changes),
+  saveSettings: (changes: Record<string, number | string | null>) => send<SettingsDoc>("PUT", "/api/settings", changes),
   resetSetting: (key?: string) => send<SettingsDoc>("POST", `/api/settings/reset${key ? `?key=${key}` : ""}`),
 };
 

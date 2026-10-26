@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     openweather_api_key: SecretStr | None = None
     solcast_api_key: SecretStr | None = None
 
+    # House and heat pump facts the user may enter (Settings tab)
+    design_outdoor_c: float | None = None
+    survey_heat_loss_kw: float | None = None
+    survey_outdoor_c: float | None = None
+    heat_pump_rated_kw: float | None = None
+
     # Gas comparison (modelled counterfactual, labelled as such)
     gas_price_p_per_kwh: float = 6.24
     boiler_efficiency: float = 0.85

@@ -79,7 +79,7 @@ def test_platform_switches_to_model_based_plan_and_scores_accuracy(tmp_path):
         hp = p.heat_pump_estimate(s)
     assert plan["status"] == "model_based", plan.get("assumptions")
     assert plan["cost"]["baseline_p"] > 0
-    assert hp["status"] == "ok" and 2.0 < hp["cop_at_7"] < 5.0
+    assert hp["status"] == "ok" and 2.0 < hp["observed_mean_cop"] < 5.5 and hp["hot_water"]["status"] in ("ok", "waiting")
     # walk the simulated clock forward a day in half-hour polls so the earlier plans can be scored
     for _ in range(50):
         p.clock.advance(timedelta(minutes=30))
@@ -90,5 +90,5 @@ def test_platform_switches_to_model_based_plan_and_scores_accuracy(tmp_path):
     assert acc["points"] > 20
     assert acc["rmse_baseline_c"] < 1.5
     ov = p.overview()
-    assert ov["heat_pump"]["cop_at_7"] > 1.5
+    assert ov["heat_pump"]["observed_mean_cop"] > 1.5
     assert ov["today"]["gas_equivalent"]["cost_pence"] >= 0

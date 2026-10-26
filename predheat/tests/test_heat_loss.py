@@ -23,8 +23,8 @@ def test_heat_loss_recovers_simulator_ground_truth(tmp_path):
     truth = p.simulated_home.ground_truth()["ua_w_per_k"]
     assert abs(est["heat_loss_w_per_k"] - truth) / truth < 0.2
     assert est["ci_low_w_per_k"] < est["heat_loss_w_per_k"] < est["ci_high_w_per_k"]
-    assert est["design_kw_at_minus_2"] > 0 and est["time_constant_h"] > 0
-    assert est["samples"] >= 48
+    assert est["design_kw"] > 0 and est["design_outdoor_c"] <= 0 and est["cooling_rate_c_per_h_at_5c"] is not None
+    assert est["samples"] >= 48 and est["days_with_data"] >= 7
     ov = p.overview()
     assert ov["heat_loss"]["status"] == "ok"
     app = create_app(settings, platform=p, poll=False)
@@ -49,5 +49,6 @@ def test_insufficient_data_is_reported_not_raised(tmp_path):
     asyncio.run(p.bootstrap(0))
     with session_scope(settings.database_url) as s:
         est = p.thermal_estimate(s, days=14)
-    assert est["status"] in ("insufficient_data", "not_identified", "ok")
-    assert "reason" in est or est["status"] == "ok"
+    assert est["status"] in ("waiting", "ok")
+    if est["status"] == "waiting":
+        assert "days it usually needs" in est["reason"] and "heat_loss_w_per_k" not in est

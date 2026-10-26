@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- "Your house" rebuilt. Heat loss is quoted the way a survey quotes it, in kW at a regional design outdoor temperature taken from your home location (South Wales -3 °C; override in Settings), with the likely range, the surveyed figure beside it when you enter one, and the margin against the heat pump's rated output. Below 30% confidence every model card shows "Waiting for data" with what it is waiting for, how far along it is and when to expect a figure; no numbers, ranges or derived values are printed. The time constant is replaced by a cooling rate at 5 °C outside. Efficiency is the observed average COP over the period with its outdoor range, fitted separately for space heating and hot water, with the 7 °C figure only once there are readings near 7 °C. Every unit and term has a tooltip; W/K lives on the System health tab.
+- Settings tab gains design outdoor temperature, surveyed heat loss and its outdoor temperature, and heat pump rated output. The survey is used as a prior for the model.
+- Energy flow diagram scoped to the heat pump only: electricity by origin and free heat from outside air in, space heating, hot water and standby out, balanced with any residual shown as unaccounted; a plain-English ratio line and a one-sentence whole-house context; a sanity guard that refuses to draw implausible figures and points at the Signal mapping table.
+
 ## 0.2.1
 
 - Fixed: whole-home import, costs, the Tariffs tab and the heat loss fit were inflated by lifetime meter readings. Hourly history rows were stamped at the start of the hour while carrying the end-of-hour value, so interleaved live readings looked like meter resets and the full register value was added each hour. History is now stamped correctly, a decrease only counts as a reset when the counter restarts near zero, and mis-stamped rows from earlier releases are removed on first start and re-fetched.

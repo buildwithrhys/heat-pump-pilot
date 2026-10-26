@@ -1,5 +1,39 @@
 import { useEffect, useState } from "react";
-import { api, type SystemHealth } from "../api";
+import { api, num, type HeatLoss, type HeatPump, type SystemHealth } from "../api";
+
+function LearnedModels() {
+  const [hl, setHl] = useState<HeatLoss | null>(null);
+  const [hp, setHp] = useState<HeatPump | null>(null);
+  useEffect(() => { api.heatLoss().then(setHl).catch(() => null); api.heatPump().then(setHp).catch(() => null); }, []);
+  if (!hl || !hp) return <p className="muted">Loading…</p>;
+  return (
+    <div className="tablewrap">
+      <table>
+        <thead><tr><th>Model</th><th>Status</th><th>Value</th><th>Detail</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Building (1R1C)</td>
+            <td><span className={`tag ${hl.status === "ok" ? "measured" : ""}`}>{hl.status === "ok" ? "learned" : "waiting"}</span></td>
+            <td className="num">{hl.status === "ok" ? `${num(hl.heat_loss_w_per_k, 0)} W/°C` : "–"}</td>
+            <td className="muted">{hl.status === "ok" ? `watts per °C of inside/outside difference, range ${num(hl.ci_low_w_per_k, 0)} to ${num(hl.ci_high_w_per_k, 0)} · confidence ${Math.round((hl.confidence ?? 0) * 100)}% · capacity ${hl.capacity_kwh_per_k != null ? `${hl.capacity_kwh_per_k} kWh/°C` : "not learned"} · time constant ${hl.time_constant_h != null ? `${hl.time_constant_h} h` : "not learned"} · design ${hl.design_outdoor_c} °C (${hl.design_region})${hl.notes && hl.notes.length ? ` · ${hl.notes.join("; ")}` : ""}` : hl.reason}</td>
+          </tr>
+          <tr>
+            <td>Heat pump, space heating</td>
+            <td><span className={`tag ${hp.heating.status === "ok" ? "measured" : ""}`}>{hp.heating.status === "ok" ? "learned" : "waiting"}</span></td>
+            <td className="num">{hp.heating.observed_cop != null ? `COP ${num(hp.heating.observed_cop, 2)}` : "–"}</td>
+            <td className="muted">{hp.heating.status === "ok" ? `${hp.heating.running_hours} running hours over ${hp.heating.days_with_data} days · slope ${hp.heating.slope_per_degc} per °C · model confidence ${Math.round(hp.heating.model_confidence * 100)}% · capacity ${hp.capacity_kw} kW (${hp.capacity_source})` : hp.heating.reason}</td>
+          </tr>
+          <tr>
+            <td>Heat pump, hot water</td>
+            <td><span className={`tag ${hp.hot_water.status === "ok" ? "measured" : ""}`}>{hp.hot_water.status === "ok" ? "learned" : "waiting"}</span></td>
+            <td className="num">{hp.hot_water.observed_cop != null ? `COP ${num(hp.hot_water.observed_cop, 2)}` : "–"}</td>
+            <td className="muted">{hp.hot_water.status === "ok" ? `${hp.hot_water.running_hours} running hours over ${hp.hot_water.days_with_data} days` : hp.hot_water.reason}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 export default function SystemPage() {
   const [s, setS] = useState<SystemHealth | null>(null);
@@ -15,6 +49,11 @@ export default function SystemPage() {
         <div className={`card ${s.control.holding ? "info" : ""}`}><h3>Control</h3><div className="big" style={{ fontSize: "1.2rem" }}>{!s.control.configured ? "Off" : s.control.holding ? `Holding ${s.control.commanded_c} °C` : "Armed"}</div><div className="sub">{s.control.configured ? `${s.control.entity} · ${s.control.last?.reason ?? "waiting for first cycle"}` : s.control.reason} · {s.record_counts.control_actions} log entries</div></div>
         <div className="card"><h3>Signals</h3><div className="big">{avail.length}<span className="muted" style={{ fontSize: "1rem" }}> / {s.signals.length}</span></div><div className="sub">{avail.filter((x) => x.stale).length} stale</div></div>
         <div className="card"><h3>Stored</h3><div className="big">{s.record_counts.measurements.toLocaleString()}</div><div className="sub">measurements · {s.record_counts.rate_intervals} rate slots · {s.record_counts.dispatches} dispatches</div></div>
+      </div>
+
+      <div className="section">
+        <h2>Learned models</h2>
+        <LearnedModels />
       </div>
 
       <div className="section">

@@ -20,7 +20,7 @@ from ..db import models as m
 from ..db.session import as_utc
 from ..domain import CapabilityReport, Measurement, Provenance, Quality, RateInterval, Signal
 from ..integrations.base import ProviderHealth
-from ..model import COPModel, fit_cop_model, fit_rc_model, prior_cop_model, survey_to_coefficient
+from ..model import DESIGN_INDOOR_C, COPModel, design_outdoor_c, fit_cop_model, fit_rc_model, prior_cop_model, survey_to_coefficient
 from ..optimiser import MPCInputs, build_mpc_plan, build_shadow_plan
 from ..pricing import RATES_AS_OF, REGION_NAMES, PriceClass, SlotPrice, build_rate_book, classify_slots, load_templates, replay, standing_charge_for_period
 from ..timeutils import LONDON, local_day_bounds, now_utc
@@ -76,6 +76,10 @@ class Platform:
                                         latitude=self.settings.latitude, longitude=self.settings.longitude)
             if self.settings.latitude is not None and prop.latitude != self.settings.latitude:
                 prop.latitude, prop.longitude = self.settings.latitude, self.settings.longitude
+            if self.settings.survey_heat_loss_kw:
+                prop.survey_heat_loss_kw = self.settings.survey_heat_loss_kw
+                prop.survey_design_indoor_c = DESIGN_INDOOR_C
+                prop.survey_design_outdoor_c = self.settings.survey_outdoor_c if self.settings.survey_outdoor_c is not None else design_outdoor_c(prop.latitude, prop.longitude)[0]
             self.property_id = prop.id
             if self.controller is not None:
                 self.controller.property_id = prop.id
@@ -196,8 +200,9 @@ class Platform:
         Inputs are resampled onto a half-hour grid: indoor and outdoor temperature
         as the last reading at each grid point (gaps over 2 h become NaN), heat
         delivered for space heating from the cumulative counter, and PV power as a
-        solar proxy when present. The survey heat loss, if recorded on the property,
-        acts as a weak prior. Everything here is read-only.
+        solar proxy when present. A surveyed heat loss, if entered, acts as a weak
+        prior. Below 30% confidence the result is a "waiting" state that says what
+        is missing; no numbers are reported.
         """
         end = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
         start = end - timedelta(days=days)
@@ -224,37 +229,71 @@ class Platform:
         q_kw = [kwh_by_start.get(g, math.nan) / 0.5 if g in kwh_by_start else math.nan for g in grid]
         pv = series(Signal.PV_POWER)
         have_pv = any(not math.isnan(v) for v in pv)
-        usable = sum(1 for a, b, c in zip(t_in, t_out, q_kw) if not (math.isnan(a) or math.isnan(b) or math.isnan(c)))
-        base = {"window_start": start.isoformat(), "window_end": end.isoformat(), "samples": usable, "model_type": "1R1C",
-                "solar_proxy": "pv_power" if have_pv else None}
-        if usable < 48:
-            return {**base, "status": "insufficient_data",
-                    "reason": f"Only {usable} usable half-hours of indoor, outdoor and heat data in the last {days} days; need at least 48 (one day)."}
+        usable_idx = [i for i, (a, b, c) in enumerate(zip(t_in, t_out, q_kw)) if not (math.isnan(a) or math.isnan(b) or math.isnan(c))]
+        usable = len(usable_idx)
+        days_with_data = len({grid[i].astimezone(LONDON).date() for i in usable_idx})
+        outdoor_seen = [t_out[i] for i in usable_idx]
+        heat_on_hours = sum(0.5 for i in usable_idx if q_kw[i] > 0.2)
         prop = s.get(m.Property, self.property_id)
-        survey = None
-        if prop and prop.survey_heat_loss_kw and prop.survey_design_indoor_c is not None and prop.survey_design_outdoor_c is not None:
-            survey = survey_to_coefficient(prop.survey_heat_loss_kw, prop.survey_design_indoor_c, prop.survey_design_outdoor_c)
-        fit = fit_rc_model(t_in, t_out, q_kw, pv if have_pv else None, step_hours=0.5, survey_ua_w_per_k=survey)
+        design_c, region = (self.settings.design_outdoor_c, "your setting") if self.settings.design_outdoor_c is not None else design_outdoor_c(
+            prop.latitude if prop else self.settings.latitude, prop.longitude if prop else self.settings.longitude)
+        survey_kw = self.settings.survey_heat_loss_kw
+        survey_at = self.settings.survey_outdoor_c if self.settings.survey_outdoor_c is not None else design_c
+        survey_ua = survey_to_coefficient(survey_kw, DESIGN_INDOOR_C, survey_at) if survey_kw else None
+        survey = ({"kw": survey_kw, "outdoor_c": survey_at, "ua_w_per_k": round(survey_ua, 1),
+                   "kw_at_design": round(survey_ua * (DESIGN_INDOOR_C - design_c) / 1000.0, 2)} if survey_ua else None)
+        base = {"window_start": start.isoformat(), "window_end": end.isoformat(), "lookback_days": days, "samples": usable,
+                "days_with_data": days_with_data, "days_needed": 7, "model_type": "1R1C", "solar_proxy": "pv_power" if have_pv else None,
+                "design_outdoor_c": design_c, "design_indoor_c": DESIGN_INDOOR_C, "design_region": region, "survey": survey,
+                "outdoor_range_c": [round(min(outdoor_seen), 1), round(max(outdoor_seen), 1)] if outdoor_seen else None,
+                "heating_hours": round(heat_on_hours, 1), "rated_kw": self.settings.heat_pump_rated_kw}
+
+        def waiting(detail: str) -> dict[str, Any]:
+            parts = ["PredHeat learns your home's heat loss from how fast it cools between heating cycles and how much heat it takes to hold temperature."]
+            parts.append(f"It has {days_with_data} of the {base['days_needed']} days it usually needs.")
+            if outdoor_seen and (max(outdoor_seen) - min(outdoor_seen) < 5.0 or sum(outdoor_seen) / len(outdoor_seen) > 12.0):
+                parts.append(f"So far the weather has been too mild ({min(outdoor_seen):.0f} to {max(outdoor_seen):.0f} °C) to measure well; expect a figure after the first cold nights.")
+            elif days_with_data < base["days_needed"]:
+                parts.append(f"Expect a figure in about {base['days_needed'] - days_with_data} days.")
+            if detail:
+                parts.append(detail)
+            return {**base, "status": "waiting", "reason": " ".join(parts)}
+
+        if usable < 48:
+            return waiting(f"Only {usable} usable half-hours of indoor, outdoor and heating data so far; it needs at least one full day.")
+        fit = fit_rc_model(t_in, t_out, q_kw, pv if have_pv else None, step_hours=0.5, survey_ua_w_per_k=survey_ua)
         if not math.isfinite(fit.ua_w_per_k) or fit.ua_w_per_k <= 0:
-            return {**base, "status": "not_identified", "reason": "The data so far does not pin down a physical heat loss. " + "; ".join(fit.notes or [])}
+            return waiting("The readings so far do not pin down a physical value yet. " + "; ".join(fit.notes or []))
         ua = fit.ua_w_per_k
-        cap = fit.capacity_kwh_per_k if math.isfinite(fit.capacity_kwh_per_k) else None
         ci_low = fit.ua_ci_low if fit.ua_ci_low is not None else -1.0
-        if fit.confidence < 0.2 or ci_low <= 0 or ua > 2000:
-            return {**base, "status": "learning", "confidence": round(fit.confidence, 2),
-                    "reason": f"Fitted so far: {ua:.0f} W/K, but the range still includes zero or the confidence is {fit.confidence:.0%}. "
-                              "More days with heating on and varied outdoor temperature will narrow it."
-                              + (" " + "; ".join(fit.notes) if fit.notes else "")}
-        return {**base, "status": "ok", "heat_loss_w_per_k": round(ua, 1),
-                "ci_low_w_per_k": round(fit.ua_ci_low, 1) if fit.ua_ci_low is not None else None,
-                "ci_high_w_per_k": round(fit.ua_ci_high, 1) if fit.ua_ci_high is not None else None,
-                "design_kw_at_minus_2": round(ua * 23.0 / 1000.0, 2),  # 21 °C inside, -2 °C outside
-                "capacity_kwh_per_k": round(cap, 2) if cap else None,
-                "time_constant_h": round(cap * 1000.0 / ua, 1) if cap else None,
-                "internal_gain_kw": round(fit.internal_gain_kw, 2) if math.isfinite(fit.internal_gain_kw) else None,
-                "solar_aperture": round(fit.solar_aperture_m2, 2) if have_pv and math.isfinite(fit.solar_aperture_m2) else None,
-                "confidence": round(fit.confidence, 2), "rmse_c": round(fit.rmse_c, 3) if fit.rmse_c is not None else None,
-                "survey_w_per_k": round(survey, 1) if survey else None, "notes": fit.notes or []}
+        if fit.confidence < 0.3 or ci_low <= 0 or ua > 2000:
+            return waiting(f"A first estimate exists but its confidence is only {fit.confidence:.0%}; PredHeat does not report a figure below 30%."
+                           + (" " + "; ".join(fit.notes) if fit.notes else ""))
+        cap = fit.capacity_kwh_per_k if math.isfinite(fit.capacity_kwh_per_k) and fit.capacity_kwh_per_k > 0 else None
+        tau_h = cap * 1000.0 / ua if cap else None
+        if tau_h is not None and not (2.0 <= tau_h <= 300.0):
+            cap, tau_h = None, None  # not a credible capacity; report heat loss only
+        gain = fit.internal_gain_kw if math.isfinite(fit.internal_gain_kw) and 0.0 <= fit.internal_gain_kw <= 3.0 else None
+        ua_kw = ua / 1000.0
+        design_kw = ua_kw * (DESIGN_INDOOR_C - design_c)
+        cooling_at_5 = ((ua_kw * (DESIGN_INDOOR_C - 5.0) - (gain or 0.0)) / cap) if cap else None
+        out = {**base, "status": "ok", "heat_loss_w_per_k": round(ua, 1),
+               "ci_low_w_per_k": round(fit.ua_ci_low, 1), "ci_high_w_per_k": round(fit.ua_ci_high, 1),
+               "design_kw": round(design_kw, 2),
+               "design_kw_low": round(fit.ua_ci_low / 1000.0 * (DESIGN_INDOOR_C - design_c), 2),
+               "design_kw_high": round(fit.ua_ci_high / 1000.0 * (DESIGN_INDOOR_C - design_c), 2),
+               "capacity_kwh_per_k": round(cap, 2) if cap else None, "time_constant_h": round(tau_h, 1) if tau_h else None,
+               "cooling_rate_c_per_h_at_5c": round(max(cooling_at_5, 0.0), 2) if cooling_at_5 is not None else None,
+               "internal_gain_kw": round(gain, 2) if gain is not None else None,
+               "confidence": round(fit.confidence, 2), "rmse_c": round(fit.rmse_c, 3) if fit.rmse_c is not None else None, "notes": fit.notes or []}
+        if survey:
+            diff = (design_kw - survey["kw_at_design"]) / survey["kw_at_design"]
+            out["survey_difference_pct"] = round(diff * 100.0, 0)
+            out["survey_disagrees"] = abs(diff) > 0.25
+        rated = self.settings.heat_pump_rated_kw
+        if rated:
+            out["rated_margin_kw"] = round(rated - design_kw, 2)
+        return out
 
     def _refresh_building_model(self, s, min_age: timedelta = timedelta(hours=6)) -> int | None:
         """Persist a new BuildingModelVersion at most every ``min_age``."""
@@ -268,7 +307,7 @@ class Platform:
         row = m.BuildingModelVersion(property_id=self.property_id, created_at=now, model_type="1R1C",
                                      heat_loss_w_per_k=est["heat_loss_w_per_k"], heat_loss_ci_low=est["ci_low_w_per_k"],
                                      heat_loss_ci_high=est["ci_high_w_per_k"], thermal_capacity_kwh_per_k=est["capacity_kwh_per_k"],
-                                     solar_gain_factor=est["solar_aperture"], internal_gain_kw=est["internal_gain_kw"],
+                                     solar_gain_factor=None, internal_gain_kw=est["internal_gain_kw"],
                                      confidence=est["confidence"], training_window_start=datetime.fromisoformat(est["window_start"]),
                                      training_window_end=datetime.fromisoformat(est["window_end"]),
                                      metrics={"rmse_c": est["rmse_c"], "samples": est["samples"], "notes": est["notes"]})
@@ -466,39 +505,72 @@ class Platform:
                             lambda: self._heat_pump_estimate(s, days, now))
 
     def _heat_pump_estimate(self, s, days: int, now: datetime) -> dict[str, Any]:
-        """COP against outdoor temperature from hourly electricity and heat, plus observed capacity."""
+        """Observed COP over the period (the headline), plus a COP-against-outdoor model
+        per end use. Space heating and hot water are fitted separately."""
         start = now - timedelta(days=days)
 
         def counter(sig: Signal):
             rows = repo.measurements_for(s, self.property_id, sig.value, start - timedelta(hours=3), now)
             return [Measurement(signal=sig, ts=as_utc(r.ts), value=r.value, quality=Quality(r.quality), provenance=Provenance(r.provenance), source_ref=r.source_ref) for r in rows]
 
-        elec = counter_to_intervals(counter(Signal.HP_ELEC_HEATING_KWH), "e")
-        heat = counter_to_intervals(counter(Signal.HP_HEAT_HEATING_KWH), "h")
-        e_h: dict[datetime, float] = {}
-        h_h: dict[datetime, float] = {}
-        for i in elec:
-            e_h[as_utc(i.start).replace(minute=0)] = e_h.get(as_utc(i.start).replace(minute=0), 0.0) + i.kwh
-        for i in heat:
-            h_h[as_utc(i.start).replace(minute=0)] = h_h.get(as_utc(i.start).replace(minute=0), 0.0) + i.kwh
         t_h: dict[datetime, list[float]] = {}
         for r in repo.measurements_for(s, self.property_id, Signal.OUTDOOR_TEMPERATURE.value, start, now):
             if r.value is not None:
                 t_h.setdefault(as_utc(r.ts).replace(minute=0, second=0, microsecond=0), []).append(r.value)
-        hours = sorted(set(e_h) & set(h_h) & set(t_h))
-        t_out = [sum(t_h[h]) / len(t_h[h]) for h in hours]
-        model = fit_cop_model(t_out, [e_h[h] for h in hours], [h_h[h] for h in hours]) if hours else prior_cop_model()
-        half_hour_kw = sorted(i.kwh / 0.5 for i in heat if i.kwh > 0)
-        capacity = half_hour_kw[int(len(half_hour_kw) * 0.95)] if len(half_hour_kw) >= 20 else 7.0
+
+        def hourly(ints) -> dict[datetime, float]:
+            out: dict[datetime, float] = {}
+            for i in ints:
+                k = as_utc(i.start).replace(minute=0)
+                out[k] = out.get(k, 0.0) + i.kwh
+            return out
+
+        def end_use(elec_sig: Signal, heat_sig: Signal, label: str) -> dict[str, Any]:
+            elec = counter_to_intervals(counter(elec_sig), "e")
+            heat = counter_to_intervals(counter(heat_sig), "h")
+            e_h, h_h = hourly(elec), hourly(heat)
+            hours = sorted(set(e_h) & set(h_h) & set(t_h))
+            t_out = [sum(t_h[h]) / len(t_h[h]) for h in hours]
+            e_tot = sum(e_h[h] for h in hours)
+            h_tot = sum(h_h[h] for h in hours)
+            model = fit_cop_model(t_out, [e_h[h] for h in hours], [h_h[h] for h in hours]) if hours else prior_cop_model()
+            running = [h for h in hours if e_h[h] >= 0.3]
+            days_seen = len({h.astimezone(LONDON).date() for h in running})
+            near7 = any(4.0 <= t <= 10.0 for t, h in zip(t_out, hours) if e_h[h] >= 0.3)
+            observed = round(h_tot / e_tot, 2) if e_tot >= 1.0 else None
+            status = "ok" if len(running) >= 24 and observed else "waiting"
+            out = {"label": label, "status": status, "observed_cop": observed, "kwh_electric": round(e_tot, 1), "kwh_heat": round(h_tot, 1),
+                   "running_hours": len(running), "days_with_data": days_seen,
+                   "outdoor_range_c": [round(min(t_out), 1), round(max(t_out), 1)] if t_out else None,
+                   "cop_at_7": round(model.cop_at(7.0), 2) if status == "ok" and near7 else None,
+                   "cop_at_minus_2": round(model.cop_at(-2.0), 2) if status == "ok" and near7 else None,
+                   "slope_per_degc": round(model.b, 3), "model_confidence": model.confidence, "notes": model.notes,
+                   "model": model.as_dict()}
+            if status != "ok":
+                out["reason"] = (f"PredHeat works out efficiency from electricity used and heat delivered while the heat pump is running on {label.lower()}. "
+                                 f"It has {len(running)} of the 24 running hours it needs, over {days_seen} days. "
+                                 + ("Expect a figure after a day or two of heating." if len(running) < 24 else "Waiting for enough energy to be counted."))
+            elif not near7:
+                out["normalised_note"] = "The 7 °C figure appears once there are running hours between 4 and 10 °C outside."
+            return out
+
+        heating = end_use(Signal.HP_ELEC_HEATING_KWH, Signal.HP_HEAT_HEATING_KWH, "Space heating")
+        dhw = end_use(Signal.HP_ELEC_DHW_KWH, Signal.HP_HEAT_DHW_KWH, "Hot water")
+        heat_all = counter_to_intervals(counter(Signal.HP_HEAT_HEATING_KWH), "h")
+        half_hour_kw = sorted(i.kwh / 0.5 for i in heat_all if i.kwh > 0)
+        capacity = half_hour_kw[int(len(half_hour_kw) * 0.95)] if len(half_hour_kw) >= 20 else (self.settings.heat_pump_rated_kw or 7.0)
         capacity = float(max(3.0, min(16.0, capacity)))
-        status = "ok" if model.n_samples >= 24 else "prior" if model.n_samples == 0 else "early"
-        return {"status": status, "model_type": "cop_linear_t_out", "cop_at_7": round(model.cop_at(7.0), 2),
-                "cop_at_2": round(model.cop_at(2.0), 2), "cop_at_minus_2": round(model.cop_at(-2.0), 2),
-                "slope_per_degc": round(model.b, 3), "observed_mean_cop": round(model.observed_mean, 2) if model.observed_mean else None,
-                "samples": model.n_samples, "confidence": model.confidence, "rmse": round(model.rmse, 3) if model.rmse is not None else None,
-                "t_range": [model.t_min, model.t_max], "capacity_kw": round(capacity, 1),
-                "capacity_source": "observed 95th percentile" if len(half_hour_kw) >= 20 else "default 7 kW",
-                "window_start": start.isoformat(), "window_end": now.isoformat(), "notes": model.notes, "model": model.as_dict()}
+        model = heating["model"]
+        return {"status": heating["status"], "model_type": "cop_linear_t_out", "lookback_days": days,
+                "heating": heating, "hot_water": dhw,
+                "cop_at_7": heating["cop_at_7"], "cop_at_2": round(COPModel(model["a"], model["b"]).cop_at(2.0), 2) if heating["cop_at_7"] else None,
+                "cop_at_minus_2": heating["cop_at_minus_2"], "slope_per_degc": heating["slope_per_degc"],
+                "observed_mean_cop": heating["observed_cop"], "samples": heating["running_hours"], "days_with_data": heating["days_with_data"],
+                "confidence": heating["model_confidence"], "rmse": model.get("rmse"), "t_range": heating["outdoor_range_c"] or [None, None],
+                "capacity_kw": round(capacity, 1), "capacity_source": "observed 95th percentile" if len(half_hour_kw) >= 20 else ("rated output" if self.settings.heat_pump_rated_kw else "default 7 kW"),
+                "rated_kw": self.settings.heat_pump_rated_kw, "reason": heating.get("reason"),
+                "why_differs": "Figures can differ from the Vaillant app: this is the ratio of heat delivered to electricity used over exactly this period, split by end use, with no normalisation to standard conditions.",
+                "window_start": start.isoformat(), "window_end": now.isoformat(), "notes": model.get("notes", []), "model": model}
 
     def _refresh_heat_pump_model(self, s, min_age: timedelta = timedelta(hours=6)) -> int | None:
         now = self.clock.now()
@@ -506,7 +578,7 @@ class Platform:
         if latest and now - as_utc(latest.created_at) < min_age:
             return latest.id
         est = self.heat_pump_estimate(s, now=now)
-        if est["status"] == "prior":
+        if est["status"] != "ok":
             return latest.id if latest else None
         row = m.HeatPumpModelVersion(property_id=self.property_id, created_at=now, model_type=est["model_type"],
                                      parameters={"a": est["model"]["a"], "b": est["model"]["b"], "capacity_kw": est["capacity_kw"]},
@@ -618,8 +690,10 @@ class Platform:
             full = self.shadow_plan(s, now)
             plan = {"status": full["status"], "reason": full["reason"], "actions": full["actions"], "cost": full.get("cost"), "model": full.get("model")}
             heat_loss = self.thermal_estimate(s, now=now)
-            heat_pump = self.heat_pump_estimate(s, now=now)
+            heat_pump = dict(self.heat_pump_estimate(s, now=now))
             heat_pump.pop("model", None)
+            heat_pump["heating"] = {k: v for k, v in heat_pump["heating"].items() if k != "model"}
+            heat_pump["hot_water"] = {k: v for k, v in heat_pump["hot_water"].items() if k != "model"}
             return {
                 "generated_at": now.isoformat(),
                 "data_mode": self.settings.data_mode.value,

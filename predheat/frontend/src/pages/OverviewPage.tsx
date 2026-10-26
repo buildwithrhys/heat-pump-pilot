@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, num, pounds, type Overview, type Reading } from "../api";
 import { PlanList, when } from "./plan";
 import { EnergyFlow } from "./flow";
+import { YourHouse } from "./house";
 
 function Tile({ title, reading, unit = "", dp = 1, sub }: { title: string; reading: Reading | null | undefined; unit?: string; dp?: number; sub?: string }) {
   const v = reading?.value;
@@ -96,45 +97,11 @@ export default function OverviewPage() {
       </div>
       <div className="section">
         <h2>Your house</h2>
-        <div className="grid">
-          <div className="card">
-            <h3>Heat loss{o.heat_loss.status === "ok" && <span className="tag">{Math.round((o.heat_loss.confidence ?? 0) * 100)}% confidence</span>}</h3>
-            {o.heat_loss.status === "ok" ? (
-              <>
-                <div className="big">{num(o.heat_loss.heat_loss_w_per_k, 0, " W/K")}</div>
-                <div className="sub">about {num(o.heat_loss.design_kw_at_minus_2, 1, " kW")} at −2 °C outside, 21 °C inside{o.heat_loss.ci_low_w_per_k != null && o.heat_loss.ci_high_w_per_k != null ? ` · range ${Math.round(o.heat_loss.ci_low_w_per_k)} to ${Math.round(o.heat_loss.ci_high_w_per_k)} W/K` : ""}</div>
-              </>
-            ) : (
-              <>
-                <div className="big" style={{ fontSize: "1.1rem" }}>Still learning</div>
-                <div className="sub">{o.heat_loss.reason}</div>
-              </>
-            )}
-          </div>
-          {o.heat_loss.status === "ok" && (
-            <div className="card">
-              <h3>How quickly it cools</h3>
-              <div className="big">{num(o.heat_loss.time_constant_h, 0, " h")}</div>
-              <div className="sub">time constant · stores {num(o.heat_loss.capacity_kwh_per_k, 1, " kWh")} per °C{o.heat_loss.internal_gain_kw != null ? ` · ${num(o.heat_loss.internal_gain_kw, 2, " kW")} internal gains` : ""}</div>
-            </div>
-          )}
-          <div className="card">
-            <h3>Heat pump efficiency{o.heat_pump.status === "ok" && <span className="tag">{Math.round(o.heat_pump.confidence * 100)}% confidence</span>}</h3>
-            <div className="big">{num(o.heat_pump.cop_at_7, 1)}</div>
-            <div className="sub">COP at 7 °C · {num(o.heat_pump.cop_at_minus_2, 1)} at −2 °C · {o.heat_pump.status === "prior" ? "typical values, no data yet" : `${o.heat_pump.samples} hours of data`}{o.heat_pump.observed_mean_cop ? ` · observed ${num(o.heat_pump.observed_mean_cop, 1)}` : ""}</div>
-          </div>
-          {o.heat_loss.status === "ok" && (
-            <div className="card">
-              <h3>Based on</h3>
-              <div className="big">{o.heat_loss.samples}</div>
-              <div className="sub">half-hours of data over {Math.round((new Date(o.heat_loss.window_end).getTime() - new Date(o.heat_loss.window_start).getTime()) / 864e5)} days{o.heat_loss.notes && o.heat_loss.notes.length > 0 ? ` · ${o.heat_loss.notes.join("; ")}` : ""}</div>
-            </div>
-          )}
-        </div>
+        <YourHouse hl={o.heat_loss} hp={o.heat_pump} />
       </div>
       <div className="section">
-        <h2>Where today's energy went</h2>
-        <EnergyFlow costs={o.today} title="Electricity in, heat out, today" />
+        <h2>Heat pump energy today</h2>
+        <EnergyFlow costs={o.today} title="Where the heat pump's energy came from and went today" days={1} />
       </div>
     </>
   );
