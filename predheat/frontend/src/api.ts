@@ -392,6 +392,34 @@ export interface SystemHealth {
   control: ControlStatus;
 }
 
+export interface CurveBand {
+  band: string; t_out: number; t_set: number; hours: number; running_hours: number; heat_kwh: number;
+  flow_now: number; flow_needed: number; flow_suggested?: number; saving_pct?: number;
+  room_offset: number; cycles_per_running_hour: number | null; run_fraction: number; flag: "hot" | "cold" | null;
+}
+export interface CurveSetting { key: "heating_curve" | "min_flow" | "cutoff"; label: string; now: number | null; suggested: number | null; why: string }
+export interface CurveWritable { entity_id: string; label: string; min: number | null; max: number | null; step: number | null; ambiguous: boolean }
+export interface CurveChange { at: string; from: string | null; to: string | null; undo: boolean; can_undo: boolean }
+export interface CurveBeforeAfter {
+  change: { at: string; setting: string; label: string; from: number; to: number };
+  status: "ok" | "waiting"; reason?: string;
+  before?: { hours: number; cop: number | null; t_out: number | null; room_offset: number | null };
+  after?: { hours: number; cop: number | null; t_out: number | null; room_offset: number | null };
+  expected_cop_after?: number; efficiency_change_pct?: number; comfort_change_c?: number;
+}
+export interface HeatingCurve {
+  status: "ok" | "waiting"; reason?: string; running_hours?: number; lookback_days?: number;
+  direction?: "lower" | "raise" | "keep"; current_curve?: number | null; suggested_curve?: number | null; saving_pct?: number; confidence?: number;
+  notes?: string[]; bands?: CurveBand[]; settings?: CurveSetting[];
+  chart?: { t: number; now?: number; suggested?: number; needed?: number }[];
+  emitter?: { k_kw_per_k13: number; spread: number; hours: number; return_reported: boolean; assumed_flow_return_difference_c: number | null; margin_c: number; output_at_50c_flow_kw: number };
+  coverage?: { t_min: number; t_max: number; running_hours: number; cold_end_checked: boolean };
+  writable: Record<string, CurveWritable>;
+  last_change: Record<string, CurveChange | null>;
+  before_after: CurveBeforeAfter | null;
+  since_change?: { at: string; label: string; to: number };
+}
+
 export const api = {
   overview: () => get<Overview>("/api/overview"),
   costs: (q: { days?: number; start?: string; end?: string; group?: "day" | "week" | "month" }) => {
@@ -417,6 +445,9 @@ export const api = {
   saveSettings: (changes: Record<string, number | string | boolean | null>) => send<SettingsDoc>("PUT", "/api/settings", changes),
   preconditions: () => get<Preconditions>("/api/control-preconditions"),
   climateEntities: () => get<{ entities: ClimateEntity[]; suggested: string | null; water_heaters?: ClimateEntity[] }>("/api/climate-entities"),
+  heatingCurve: (days = 14) => get<HeatingCurve>(`/api/heating-curve?days=${days}`),
+  applyCurve: (setting: string, value: number) => send<HeatingCurve>("POST", "/api/heating-curve/apply", { setting, value }),
+  undoCurve: (setting: string) => send<HeatingCurve>("POST", "/api/heating-curve/undo", { setting }),
   resetSetting: (key?: string) => send<SettingsDoc>("POST", `/api/settings/reset${key ? `?key=${key}` : ""}`),
 };
 

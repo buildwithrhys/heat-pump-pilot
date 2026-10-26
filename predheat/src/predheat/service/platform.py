@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
+import statistics
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -614,6 +615,228 @@ class Platform:
                         "credible": b["n"] >= 5 and o["n"] >= 5 and abs(diff) > 2 * se})
         return out
 
+    # ------------------------------------------------------------------ heating curve check
+    CURVE_SETTINGS = {
+        "heating_curve": (Signal.HEATING_CURVE, ("heating_curve",), 0.5, "Heating curve"),
+        "min_flow": (Signal.MIN_FLOW_SETPOINT, ("min_flow_temperature_setpoint", "min_flow"), 10.0, "Minimum flow temperature"),
+        "cutoff": (Signal.HEAT_DEMAND_LIMIT_OUTDOOR, ("heat_demand_limited_by_outside_temperature", "heat_demand_limit"), 6.0, "Heat demand limit (outdoor cut-off)"),
+    }
+
+    def _hourly_rows(self, s, start: datetime, end: datetime):
+        from ..model.curve import HourRow
+
+        def means(sig: Signal) -> dict[datetime, float]:
+            acc: dict[datetime, list[float]] = {}
+            for r in repo.measurements_for(s, self.property_id, sig.value, start, end):
+                if r.value is not None:
+                    acc.setdefault(as_utc(r.ts).replace(minute=0, second=0, microsecond=0), []).append(r.value)
+            return {k: sum(v) / len(v) for k, v in acc.items()}
+
+        def sums(sig: Signal) -> dict[datetime, float]:
+            out: dict[datetime, float] = {}
+            for i in counter_to_intervals(self._counter_measurements(s, sig, start - timedelta(hours=3), end), sig.value):
+                k = as_utc(i.start).replace(minute=0)
+                if start <= k < end:
+                    out[k] = out.get(k, 0.0) + i.kwh
+            return out
+
+        t_out, t_in, t_set = means(Signal.OUTDOOR_TEMPERATURE), means(Signal.INDOOR_TEMPERATURE), means(Signal.INDOOR_SETPOINT)
+        flow, flow_set, ret = means(Signal.FLOW_TEMPERATURE), means(Signal.FLOW_TEMPERATURE_SETPOINT), means(Signal.RETURN_TEMPERATURE)
+        heat, dhw, elec = sums(Signal.HP_HEAT_HEATING_KWH), sums(Signal.HP_HEAT_DHW_KWH), sums(Signal.HP_ELEC_HEATING_KWH)
+        cycles, op = sums(Signal.HP_ON_OFF_CYCLES), sums(Signal.HP_OPERATION_HOURS)
+        rows = []
+        t = start.replace(minute=0, second=0, microsecond=0)
+        while t < end:
+            rows.append((t, HourRow(t_out.get(t), t_in.get(t), t_set.get(t), flow.get(t), flow_set.get(t), ret.get(t), heat.get(t, 0.0), dhw.get(t, 0.0),
+                                    elec.get(t, 0.0), cycles.get(t) if cycles else None, min(op.get(t), 1.0) if op and op.get(t) is not None else None)))
+            t += timedelta(hours=1)
+        return rows
+
+    def curve_entities(self) -> dict[str, dict[str, Any]]:
+        """The Vaillant number entities PredHeat may set on request, with their limits."""
+        states = getattr(self.telemetry, "last_states", {}) or {}
+        out: dict[str, dict[str, Any]] = {}
+        for key, (_sig, hints, _max_change, label) in self.CURVE_SETTINGS.items():
+            cands = [st for eid, st in states.items() if st.domain == "number" and any(h in eid for h in hints)]
+            cands.sort(key=lambda st: (st.platform != "mypyllant", "circuit_0" not in st.entity_id, st.entity_id))
+            if cands:
+                st = cands[0]
+                a = st.attributes
+                out[key] = {"entity_id": st.entity_id, "label": label, "min": a.get("min"), "max": a.get("max"), "step": a.get("step"),
+                            "value": st.as_float(), "ambiguous": len(cands) > 1}
+        return out
+
+    def _last_curve_change(self, s, entity_id: str) -> dict[str, Any] | None:
+        row = (s.query(m.ControlExecutionLog).filter(m.ControlExecutionLog.property_id == self.property_id, m.ControlExecutionLog.action == "number.set_value",
+                                                     m.ControlExecutionLog.target == entity_id)
+               .order_by(m.ControlExecutionLog.ts.desc(), m.ControlExecutionLog.id.desc()).first())
+        if row is None:
+            return None
+        return {"at": as_utc(row.ts).isoformat(), "from": row.previous_value, "to": row.requested_value, "undo": (row.reason or "").startswith("Undo"),
+                "can_undo": row.status == "executed" and not (row.reason or "").startswith("Undo") and row.previous_value is not None}
+
+    def heating_curve_check(self, s, days: int = 14, now: datetime | None = None) -> dict[str, Any]:
+        now = now or self.clock.now()
+        return self._cached(("curve", days, now.replace(minute=now.minute - now.minute % 5, second=0, microsecond=0)),
+                            lambda: self._heating_curve_check(s, days, now))
+
+    def _heating_curve_check(self, s, days: int, now: datetime) -> dict[str, Any]:
+        from ..model.curve import analyse_curve
+
+        est = self.thermal_estimate(s, now=now)
+        latest = repo.latest_measurements(s, self.property_id)
+
+        def cur(sig: Signal) -> float | None:
+            r = latest.get(sig.value)
+            return r.value if r else None
+
+        ents = self.curve_entities()
+
+        def setting(key: str, sig: Signal) -> float | None:
+            # the live Home Assistant state is the truth; the stored reading can lag a change by a cycle
+            live = (ents.get(key) or {}).get("value")
+            return live if live is not None else cur(sig)
+
+        current_curve = setting("heating_curve", Signal.HEATING_CURVE)
+        min_flow = setting("min_flow", Signal.MIN_FLOW_SETPOINT)
+        cutoff = setting("cutoff", Signal.HEAT_DEMAND_LIMIT_OUTDOOR)
+        base: dict[str, Any] = {"writable": {k: {kk: vv for kk, vv in v.items() if kk != "value"} for k, v in ents.items()},
+                                "last_change": {k: self._last_curve_change(s, v["entity_id"]) for k, v in ents.items()},
+                                "before_after": self._curve_before_after(s, now)}
+        if est.get("status") != "ok":
+            return {**base, "status": "waiting",
+                    "reason": "The curve check uses your house's heat loss, which PredHeat is still learning (see Your house). It runs automatically once that figure is ready."}
+        start = now - timedelta(days=days)
+        changes = self._curve_changes(s, now)
+        while len(changes) >= 2 and changes[-1][1] == changes[-2][1] and abs(changes[-1][4] - changes[-2][3]) < 1e-6:
+            changes = changes[:-2]  # a change that was then put back leaves the old hours valid
+        changes = [c for c in changes if c[0] > start]
+        if changes:
+            # hours run on the old settings would compare the new value against the old water temperatures
+            start = max(c[0] for c in changes)
+        rows = [r for _t, r in self._hourly_rows(s, start, now)]
+        res = analyse_curve(rows, est["heat_loss_w_per_k"], est.get("internal_gain_kw"), current_curve, min_flow, cutoff)
+        res["lookback_days"] = days
+        if changes:
+            at, _key, label, _frm, to = max(changes)
+            res["since_change"] = {"at": at.isoformat(), "label": label, "to": to}
+            if res["status"] == "waiting":
+                shown = f"{to:.2f}" if _key == "heating_curve" else f"{to:.0f} °C"
+                res["reason"] = (f"{label} was changed to {shown} on {at.astimezone(LONDON).strftime('%-d %b')}. The check now looks only at heating since then, "
+                                 f"so it reflects the new setting. It needs about 12 hours of steady heating; so far {res.get('running_hours', 0)}. "
+                                 "Expect a result after a day or two of heating.")
+        return {**base, **res}
+
+    def _curve_changes(self, s, now: datetime) -> list[tuple[datetime, str, str, float, float]]:
+        """Changes to the three settings in the last 45 days: from the stored readings, and from
+        changes made on this page (which can share a timestamp with the last reading)."""
+        changes = []
+        for key, (sig, _h, _mc, label) in self.CURVE_SETTINGS.items():
+            rows = [r for r in repo.measurements_for(s, self.property_id, sig.value, now - timedelta(days=45), now) if r.value is not None]
+            for a, b in zip(rows, rows[1:]):
+                if abs(b.value - a.value) > 0.01:
+                    changes.append((as_utc(b.ts), key, label, a.value, b.value))
+        by_entity = {v["entity_id"]: k for k, v in self.curve_entities().items()}
+        for r in (s.query(m.ControlExecutionLog).filter(m.ControlExecutionLog.property_id == self.property_id, m.ControlExecutionLog.action == "number.set_value",
+                                                        m.ControlExecutionLog.status == "executed", m.ControlExecutionLog.ts >= now - timedelta(days=45)).all()):
+            key = by_entity.get(r.target or "")
+            if key and r.previous_value is not None and r.requested_value is not None:
+                changes.append((as_utc(r.ts), key, self.CURVE_SETTINGS[key][3], float(r.previous_value), float(r.requested_value)))
+        return sorted(changes)
+
+    def _curve_before_after(self, s, now: datetime) -> dict[str, Any] | None:
+        """After the last change to any of the three settings, compare efficiency (against what the
+        previous week's model expected at the same outdoor temperatures) and comfort."""
+        changes = self._curve_changes(s, now)
+        if not changes:
+            return None
+        at, key, label, frm, to = changes[-1]
+        out: dict[str, Any] = {"change": {"at": at.isoformat(), "setting": key, "label": label, "from": frm, "to": to}}
+        if now - at < timedelta(hours=24):
+            out.update({"status": "waiting", "reason": "Measuring: a fair comparison needs at least a day of heating after the change."})
+            return out
+
+        def summarise(rows):
+            run = [r for _t, r in rows if r.heat_kwh >= 0.3 and r.dhw_kwh < 0.1 and r.elec_kwh > 0.05 and r.t_out is not None]
+            e, h = sum(r.elec_kwh for r in run), sum(r.heat_kwh for r in run)
+            offs = [r.t_in - r.t_set for _t, r in rows if r.t_in is not None and r.t_set is not None]
+            return run, {"hours": len(run), "cop": round(h / e, 2) if e >= 1 and h / e >= 1 else None,
+                         "t_out": round(sum(r.t_out for r in run) / len(run), 1) if run else None,
+                         "room_offset": round(statistics.median(offs), 2) if offs else None}
+
+        before_rows, before = summarise(self._hourly_rows(s, at - timedelta(days=7), at))
+        after_rows, after = summarise(self._hourly_rows(s, at, min(now, at + timedelta(days=7))))
+        out.update({"before": before, "after": after})
+        if len(before_rows) >= 12 and len(after_rows) >= 6 and after["cop"]:
+            model = fit_cop_model([r.t_out for r in before_rows], [r.elec_kwh for r in before_rows], [r.heat_kwh for r in before_rows])
+            e = sum(r.elec_kwh for r in after_rows)
+            expected = sum(r.elec_kwh * model.cop_at(r.t_out) for r in after_rows) / e if e else None
+            if expected:
+                out["expected_cop_after"] = round(expected, 2)
+                out["efficiency_change_pct"] = round((after["cop"] / expected - 1.0) * 100.0, 1)
+        if before["room_offset"] is not None and after["room_offset"] is not None:
+            out["comfort_change_c"] = round(after["room_offset"] - before["room_offset"], 2)
+        out["status"] = "ok" if "efficiency_change_pct" in out else "waiting"
+        if out["status"] == "waiting":
+            out["reason"] = "Not enough heating hours yet on one side of the change to compare fairly."
+        return out
+
+    async def apply_curve_setting(self, s, key: str, value: float) -> dict[str, Any]:
+        """Set one of the three Vaillant settings on an explicit, confirmed request. Bounded by the
+        entity's own limits and a maximum change per step, logged, and undoable."""
+        if key not in self.CURVE_SETTINGS:
+            raise ValueError("unknown setting")
+        if self.controller is None or not hasattr(self.controller.adapter, "set_number"):
+            raise ValueError("this installation cannot write settings")
+        sig, _hints, max_change, label = self.CURVE_SETTINGS[key]
+        ent = self.curve_entities().get(key)
+        if not ent:
+            raise ValueError(f"no {label.lower()} setting was found in Home Assistant; change it in myVAILLANT instead")
+        step = float(ent.get("step") or (0.05 if key == "heating_curve" else 1.0))
+        value = round(round(float(value) / step) * step, 4)
+        lo, hi = ent.get("min"), ent.get("max")
+        if (lo is not None and value < float(lo)) or (hi is not None and value > float(hi)):
+            raise ValueError(f"{label} must be between {lo} and {hi}")
+        current = await self.controller.adapter.current_state(ent["entity_id"])
+        if current is None:
+            current = ent.get("value")
+        if current is not None and abs(value - current) > max_change + 1e-9:
+            raise ValueError(f"{label} can change by at most {max_change:g} at a time; it is {current:g} now")
+        await self.controller.adapter.set_number(ent["entity_id"], value)
+        now = self.clock.now()
+        s.add(m.ControlExecutionLog(property_id=self.property_id, ts=now, action="number.set_value", target=ent["entity_id"],
+                                    requested_value=str(value), previous_value=None if current is None else str(current), status="executed",
+                                    reason=f"{label} changed from {current} to {value} on the heating curve check, at your request"))
+        repo.upsert_measurements(s, self.property_id, [Measurement(signal=sig, ts=now, value=value, quality=Quality.SENSOR,
+                                                                   provenance=Provenance.HOME_ASSISTANT, source_ref=ent["entity_id"])])
+        if hasattr(self.telemetry, "last_states") and ent["entity_id"] in self.telemetry.last_states:
+            self.telemetry.last_states[ent["entity_id"]].state = str(value)
+        log.warning("%s set to %s on %s at the user's request (was %s)", label, value, ent["entity_id"], current)
+        self._memo.clear()
+        return self._heating_curve_check(s, 14, now)
+
+    async def undo_curve_setting(self, s, key: str) -> dict[str, Any]:
+        if key not in self.CURVE_SETTINGS:
+            raise ValueError("unknown setting")
+        ent = self.curve_entities().get(key)
+        if not ent:
+            raise ValueError("setting not found")
+        last = self._last_curve_change(s, ent["entity_id"])
+        if not last or not last["can_undo"]:
+            raise ValueError("there is no change of yours to undo")
+        sig, _hints, _mc, label = self.CURVE_SETTINGS[key]
+        prev = float(last["from"])
+        await self.controller.adapter.set_number(ent["entity_id"], prev)
+        now = self.clock.now()
+        s.add(m.ControlExecutionLog(property_id=self.property_id, ts=now, action="number.set_value", target=ent["entity_id"],
+                                    requested_value=str(prev), previous_value=last["to"], status="executed", reason=f"Undo: {label} put back to {prev}"))
+        repo.upsert_measurements(s, self.property_id, [Measurement(signal=sig, ts=now, value=prev, quality=Quality.SENSOR,
+                                                                   provenance=Provenance.HOME_ASSISTANT, source_ref=ent["entity_id"])])
+        if hasattr(self.telemetry, "last_states") and ent["entity_id"] in self.telemetry.last_states:
+            self.telemetry.last_states[ent["entity_id"]].state = str(prev)
+        self._memo.clear()
+        return self._heating_curve_check(s, 14, now)
+
     # ------------------------------------------------------------------ control gate support
     def climate_entities(self) -> dict[str, Any]:
         """climate.* entities seen at discovery, with the myVAILLANT zone first and suggested when it is the only one."""
@@ -835,214 +1058,6 @@ class Platform:
                 "caveats": ["Every tariff is priced on exactly the same half-hours: those for which PredHeat has your actual prices. Half-hours without a stored price are left out of both sides.",
                             "Replay of your consumption as it happened. A tariff with different cheap windows would change when PredHeat heats, so the optimised figure would be lower still.",
                             f"Other tariffs use indicative national rates unless you tick \"Use published rates for my region\"{' (your tariff code says region ' + region + (', ' + REGION_NAMES[region] if region in REGION_NAMES else '') + ')' if region else ''}.",
-                            "Exit fees, eligibility (EV, smart meter) and export rates are not included."]}
-
-    # ------------------------------------------------------------------ control gate support
-    def climate_entities(self) -> dict[str, Any]:
-        """climate.* entities seen at discovery, with the myVAILLANT zone first and suggested when it is the only one."""
-        states = getattr(self.telemetry, "last_states", {}) or {}
-        rows = []
-        for eid, st in states.items():
-            if st.domain != "climate":
-                continue
-            rows.append({"entity_id": eid, "name": st.attributes.get("friendly_name") or eid, "platform": st.platform,
-                         "state": st.state, "current_temperature": st.attributes.get("current_temperature"), "target": st.attributes.get("temperature")})
-        rows.sort(key=lambda r: (r["platform"] != "mypyllant", r["entity_id"]))
-        vaillant = [r for r in rows if r["platform"] == "mypyllant"]
-        suggested = vaillant[0]["entity_id"] if len(vaillant) == 1 else (rows[0]["entity_id"] if len(rows) == 1 else None)
-        heaters = [{"entity_id": eid, "name": st.attributes.get("friendly_name") or eid, "platform": st.platform, "state": st.state,
-                    "current_temperature": st.attributes.get("current_temperature"), "target": st.attributes.get("temperature")}
-                   for eid, st in states.items() if st.domain == "water_heater"]
-        heaters.sort(key=lambda r: (r["platform"] != "mypyllant", r["entity_id"]))
-        return {"entities": rows, "suggested": suggested, "water_heaters": heaters}
-
-    def control_preconditions(self, s, now: datetime | None = None) -> dict[str, Any]:
-        """What a person should have in place before switching Allow control on."""
-        now = now or self.clock.now()
-        shadow_days = len({as_utc(r.issued_at).astimezone(LONDON).date() for r in s.query(m.OptimisationRun.issued_at)
-                          .filter(m.OptimisationRun.property_id == self.property_id, m.OptimisationRun.mode != "monitor").all()})
-        est = self.thermal_estimate(s, now=now)
-        acc = self.forecast_accuracy(s, now=now)
-        entity = self.settings.control_climate_entity
-        checks = [
-            {"key": "shadow_days", "label": "At least 7 days in Shadow mode", "met": shadow_days >= 7, "detail": f"{shadow_days} days of recorded plans so far"},
-            {"key": "heat_loss", "label": "Heat loss confidence 50% or above", "met": est.get("status") == "ok" and (est.get("confidence") or 0) >= 0.5,
-             "detail": f"{(est.get('confidence') or 0):.0%}" if est.get("status") == "ok" else "still waiting for data"},
-            {"key": "accuracy", "label": "Forecast accuracy under 0.5 °C", "met": acc.get("status") == "ok" and (acc.get("rmse_baseline_c") or 9) < 0.5,
-             "detail": f"{acc.get('rmse_baseline_c')} °C RMSE" if acc.get("status") == "ok" else "no scored plans yet"},
-            {"key": "entity", "label": "A climate entity chosen", "met": bool(entity), "detail": entity or "none"},
-        ]
-        return {"checks": checks, "all_met": all(c["met"] for c in checks), "max_offset_c": self.settings.control_max_offset_c}
-
-    def log_gate_change(self, s, enabled: bool, acknowledged: bool, unmet: list[str]) -> None:
-        s.add(m.ControlExecutionLog(property_id=self.property_id, ts=self.clock.now(), action="gate", target=self.settings.control_climate_entity,
-                                    requested_value="on" if enabled else "off", previous_value=None, status="changed",
-                                    reason=("Allow control switched on" + (f" with unmet preconditions acknowledged: {', '.join(unmet)}" if unmet else "")) if enabled else "Allow control switched off"))
-
-    # ------------------------------------------------------------------ sensor mapping overrides
-    def mapping_view(self, s) -> dict[str, Any]:
-        overrides = repo.mapping_overrides(s, self.property_id)
-        candidates = getattr(self.telemetry, "last_candidates", {}) or {}
-        rows = []
-        for cap in (self.capability_report.capabilities if self.capability_report else []):
-            rows.append({"signal": cap.signal.value, "description": SIGNAL_CATALOGUE[cap.signal].description, "unit": SIGNAL_CATALOGUE[cap.signal].unit,
-                         "source": cap.source_ref, "status": cap.status, "confidence": cap.confidence, "notes": cap.notes,
-                         "overridden": cap.signal.value in overrides, "candidates": candidates.get(cap.signal.value, [])})
-        return {"editable": hasattr(self.telemetry, "set_overrides"), "signals": rows}
-
-    async def set_mapping(self, s, signal: str, entity_id: str | None) -> dict[str, Any]:
-        if not hasattr(self.telemetry, "set_overrides"):
-            raise ValueError("mapping can only be changed with a Home Assistant data source")
-        sig = Signal(signal)
-        spec = SIGNAL_CATALOGUE[sig]
-        if entity_id:
-            states = getattr(self.telemetry, "last_states", {}) or {}
-            st = states.get(entity_id)
-            if st is None:
-                fresh = {x.entity_id: x for x in await self.telemetry.client.states()}
-                st = fresh.get(entity_id)
-                if st is None:
-                    raise ValueError(f"{entity_id} is not a Home Assistant entity")
-                states[entity_id] = st
-            scale = spec.unit_scale.get(st.unit or "", 1.0) if spec.unit_scale else 1.0
-            if spec.unit_scale and st.unit and st.unit not in spec.unit_scale:
-                raise ValueError(f"{entity_id} reports {st.unit}, which cannot be converted to {spec.unit}")
-            repo.set_mapping_override(s, self.property_id, signal, entity_id, scale, Provenance.HOME_ASSISTANT.value, spec.default_quality.value if spec.default_quality.value != "unavailable" else "sensor")
-        else:
-            repo.clear_mapping_override(s, self.property_id, signal)
-        ov = repo.mapping_overrides(s, self.property_id)
-        self.capability_report = self.telemetry.set_overrides({k: {"source_ref": r.source_ref, "unit_scale": r.unit_scale} for k, r in ov.items()}, self.capability_report)
-        if not entity_id:
-            # back to discovery for this signal: rerun discovery for an accurate report
-            self.capability_report = await self.telemetry.discover()
-        self._memo.clear()
-        return self.mapping_view(s)
-
-    # ------------------------------------------------------------------ tariff comparison
-    def compare_tariffs(self, s, days: int = 30, now: datetime | None = None, ev_kwh_per_day: float = 0.0, battery_kwh_per_day: float = 0.0) -> dict[str, Any]:
-        now = now or self.clock.now()
-        return self._cached(("tariffs", days, now.date(), ev_kwh_per_day, battery_kwh_per_day),
-                            lambda: self._compare_tariffs(s, days, now, ev_kwh_per_day, battery_kwh_per_day))
-
-    async def refresh_live_rates(self, s, days: int, now: datetime | None = None) -> dict[str, Any]:
-        """Fetch each template's real unit rates for your region from the Octopus API and keep them
-        as rate intervals, so the replay uses published prices rather than indicative ones. Also
-        makes Agile replayable."""
-        if self.octopus_api is None:
-            return {"status": "unavailable", "reason": "no API client"}
-        now = now or self.clock.now()
-        tariff_code = self.last_poll.get("tariff_code") or ""
-        region = tariff_code.rsplit("-", 1)[-1] if "-" in tariff_code else None
-        if not region or len(region) != 1:
-            return {"status": "unavailable", "reason": "region unknown until the Octopus tariff code is seen"}
-        from ..pricing.octopus_api import expand_to_half_hours
-        start = now - timedelta(days=days + 1)
-        fetched = {}
-        for t in load_templates(self.settings.data_dir):
-            if t.code == "_error":
-                continue
-            product = await self.octopus_api.latest_product_code(t.code)
-            if not product:
-                continue
-            try:
-                rates = await self.octopus_api.unit_rates(product, region, start, now)
-                code = f"E-1R-{product}-{region}"
-                n = repo.upsert_rates(s, expand_to_half_hours(rates, start, now), now)
-                sc = await self.octopus_api.standing_charge(product, region)
-                fetched[t.code] = {"product": product, "tariff_code": code, "rows": n, "standing_p_per_day": sc}
-            except Exception as exc:  # noqa: BLE001
-                fetched[t.code] = {"error": str(exc)}
-        self.last_poll["live_rates"] = fetched
-        self._memo = {k: v for k, v in self._memo.items() if k[1:2] != ("tariffs",)}
-        return {"status": "ok", "region": region, "fetched": fetched}
-
-    def _compare_tariffs(self, s, days: int, now: datetime, ev_kwh_per_day: float = 0.0, battery_kwh_per_day: float = 0.0) -> dict[str, Any]:
-        """Replay the last ``days`` of half-hourly import on each tariff template."""
-        today = now.astimezone(LONDON).date()
-        start, _ = local_day_bounds(today - timedelta(days=days))
-        _, end = local_day_bounds(today - timedelta(days=1))
-
-        def counter(sig: Signal):
-            rows = repo.measurements_for(s, self.property_id, sig.value, start - timedelta(hours=1), end + timedelta(hours=1))
-            return [Measurement(signal=sig, ts=as_utc(r.ts), value=r.value, quality=Quality(r.quality), provenance=Provenance(r.provenance), source_ref=r.source_ref) for r in rows]
-
-        source = "whole_home_import"
-        ints = [i for i in counter_to_intervals(counter(Signal.GRID_IMPORT_KWH), "grid_import") if start <= i.start < end]
-        metered = repo.metered_intervals_for(s, self.property_id, start, end)
-        if len(metered) >= 0.9 * max(1, int((end - start).total_seconds() // 1800)):
-            from ..analytics.energy_accounting import EnergyInterval
-            ints = [EnergyInterval(as_utc(r.start), as_utc(r.end), r.kwh, Quality.METERED, "grid_import") for r in metered]
-            source = "smart_meter_half_hourly"
-        if sum(i.kwh for i in ints) < 1.0:
-            source = "heat_pump_only"
-            heat_e = counter_to_intervals(counter(Signal.HP_ELEC_HEATING_KWH), "e")
-            dhw_e = counter_to_intervals(counter(Signal.HP_ELEC_DHW_KWH), "d")
-            by: dict[datetime, float] = {}
-            for i in heat_e + dhw_e:
-                if start <= i.start < end:
-                    by[i.start] = by.get(i.start, 0.0) + i.kwh
-            from ..analytics.energy_accounting import EnergyInterval
-            ints = [EnergyInterval(k, k + timedelta(minutes=30), v, Quality.MODEL_DERIVED, "hp") for k, v in sorted(by.items())]
-        triples = [(as_utc(i.start), as_utc(i.end), i.kwh) for i in ints]
-        total_kwh = sum(k for _, _, k in triples)
-        if total_kwh < 1.0:
-            return {"status": "no_data", "reason": "Not enough consumption history yet.", "days": days, "results": []}
-        if total_kwh > _import_limit_kwh(days):
-            return {"status": "implausible", "reason": f"Data looks wrong: {total_kwh:,.0f} kWh of import in {days} days. See System health.", "days": days, "results": [], "kwh": round(total_kwh, 1)}
-        # what it actually cost on the current tariff, priced slot by slot
-        tariff_code = self.last_poll.get("tariff_code")
-        actual = None
-        if tariff_code:
-            book = build_rate_book([_ri(r) for r in repo.rates_for(s, tariff_code, start, end)], tariff_code)
-            cost = 0.0
-            complete = True
-            for st, en, k in triples:
-                c, _eff, ok = book.cost_pence(st, en, k)
-                cost += c
-                complete = complete and ok
-            charges = s.query(m.TariffStandingCharge).filter_by(tariff_code=tariff_code).all()
-            from ..domain import StandingCharge
-            sc = standing_charge_for_period([StandingCharge(start=as_utc(c.start), end=as_utc(c.end), pence_per_day=c.pence_per_day, tariff_code=c.tariff_code) for c in charges], start, end)
-            actual = {"code": tariff_code, "name": "Your current tariff (actual prices)", "unit_pence": round(cost, 1), "standing_pence": round(sc, 1),
-                      "total_pence": round(cost + sc, 1), "kwh": round(total_kwh, 2), "prices_complete": complete,
-                      "effective_p_per_kwh": round(cost / total_kwh, 2)}
-        results = []
-        live = self.last_poll.get("live_rates") or {}
-        annual = self._annual_profile(s, now)
-        for t in load_templates(self.settings.data_dir):
-            if t.code == "_error":
-                results.append({"code": t.code, "name": t.name, "replayable": False, "note": t.description})
-                continue
-            lr = live.get(t.code) or {}
-            if lr.get("tariff_code"):
-                book = build_rate_book([_ri(r) for r in repo.rates_for(s, lr["tariff_code"], start, end)], lr["tariff_code"])
-                if book.intervals:
-                    r = replay_with_book(book, t, triples, lr.get("standing_p_per_day"), ev_kwh_per_day, battery_kwh_per_day)
-                    r.update({"description": t.description, "replayable": True, "requires": t.requires, "note": (t.note + " " if t.note else "") + f"Priced with published rates for product {lr['product']}.",
-                              "rates_source": "octopus_api", "annualised_pounds": _annualise(r, annual)})
-                    results.append(r)
-                    continue
-            if not t.replayable:
-                results.append({"code": t.code, "name": t.name, "description": t.description, "replayable": False, "note": t.note, "requires": t.requires})
-                continue
-            r = replay(t, scenario_intervals(t, triples, ev_kwh_per_day, battery_kwh_per_day))
-            r.update({"description": t.description, "replayable": True, "requires": t.requires, "note": t.note, "rates_source": "indicative",
-                      "annualised_pounds": _annualise(r, annual)})
-            results.append(r)
-        ranked = sorted([r for r in results if r.get("replayable")], key=lambda r: r["total_pence"])
-        best = ranked[0] if ranked else None
-        region = tariff_code.rsplit("-", 1)[-1] if tariff_code and "-" in tariff_code else None
-        if actual and best:
-            actual["difference_vs_best_pence"] = round(actual["total_pence"] - best["total_pence"], 1)
-            actual["product"] = next((r["code"] for r in ranked if r["code"] in (tariff_code or "")), None)
-            actual["on_cheapest"] = actual["product"] == best["code"]
-        return {"status": "ok", "days": days, "period": {"start": start.isoformat(), "end": end.isoformat()}, "source": source,
-                "kwh": round(total_kwh, 2), "rates_as_of": RATES_AS_OF, "region": region, "region_name": REGION_NAMES.get(region or "", None),
-                "scenario": {"ev_kwh_per_day": ev_kwh_per_day, "battery_kwh_per_day": battery_kwh_per_day},
-                "annual": annual, "live_rates": {k: v.get("product") for k, v in live.items() if v.get("product")},
-                "actual": actual, "results": ranked + [r for r in results if not r.get("replayable")],
-                "caveats": ["Replay of your consumption as it happened. A tariff with different cheap windows would change when PredHeat heats, so the optimised figure would be lower still.",
-                            f"Unit rates are indicative published prices at the date shown, not your region's exact prices{' (your tariff code says region ' + region + (', ' + REGION_NAMES[region] if region in REGION_NAMES else '') + ')' if region else ''}; check before switching.",
                             "Exit fees, eligibility (EV, smart meter) and export rates are not included."]}
 
     # ------------------------------------------------------------------ control

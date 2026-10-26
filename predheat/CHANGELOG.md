@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+- **Heating curve check**, on the Overview under Your house. From the last 14 days of your own data PredHeat measures how much heat your radiators give out and, with your learned heat loss, works out the water temperature your house actually needs at each outdoor temperature. It shows that against what your controller asks for, suggests a heating curve (and, where it helps, a minimum flow temperature and outdoor cut-off), and estimates the saving. Rooms that run cold in a band of weather override any suggestion to go lower.
+- **Change it from the page.** Where Home Assistant offers the setting as an adjustable entity, a Change button sets it on your Vaillant controller once, after a confirmation naming the entity and both values. PredHeat never changes these settings by itself. Each change stays within the entity's own range and a sensible step, is recorded in the control log, and can be undone from the same place. After a change the check looks only at heating since then, and "Since your last change" compares efficiency against what the previous week predicted for the same weather.
+- **Fixed: the 0.3.1 tariff comparison fix was not running.** A stale copy of the 0.3.0 tariff comparison further down the same file replaced it, so the Tariffs tab still divided by unpriced kWh and your tariff's row used the standard rates. The stale copy is removed and a test now fails if any method is defined twice.
+- The simulator offers the three settings as adjustable entities, so the change and undo can be tried without a real system.
+
 ## 0.3.1
 
 Fixes for wrong figures found on the pilot. Each has a test that failed before the fix.

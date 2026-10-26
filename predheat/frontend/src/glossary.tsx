@@ -54,6 +54,15 @@ export const GLOSSARY: Record<string, string> = {
   price_coverage: "The share of your electricity for which PredHeat has the actual half-hourly price you paid. Prices are only available from when PredHeat was installed. Every tariff is compared on exactly this share.",
   reconciliation: "Your tariff's standard rates replayed on the same half-hours, compared with what you actually paid. A difference shows how much the standard rates miss, usually extra cheap Intelligent Octopus slots, and how far to trust the other replays.",
   coast_rate: "The dear rate in force while the house coasts. The saving comes from the pre-heat earlier, which bought the heat at the cheap rate.",
+  heating_curve: "Heating curve: the setting on your Vaillant controller that decides how hot the radiator water should be for each outdoor temperature. A higher number means hotter water in cold weather. Water only as hot as the house needs is cheaper, because the heat pump works less hard.",
+  needed_flow: "The water temperature your radiators need to hold your setpoint at each outdoor temperature, worked out from your house's heat loss and how much heat your radiators gave out at the temperatures they actually ran at, plus a 1 °C safety margin.",
+  outdoor_cutoff: "Heat demand limit (outdoor cut-off): above this outdoor temperature the Vaillant controller stops space heating. Your house's own warmth from people, appliances and sunshine usually covers the last few degrees.",
+  min_flow: "Minimum flow temperature: the controller never sends water cooler than this, even on mild days. Set too high, it overrides the curve and heats the water more than the house needs.",
+  short_cycling: "Short cycling: the compressor switching on and off several times an hour. It usually means the water is hotter than the house needs, and it wears the compressor and costs efficiency.",
+  radiator_fit: "How much heat your radiators give out for a given water temperature, measured from your own data. Shown as the output at 50 °C water with the room at your setpoint.",
+  curve_margin: "The suggestion keeps the water 1 °C warmer than the bare minimum, to cover recovery after setbacks and small errors in the estimate.",
+  curve_before_after: "After a change, PredHeat compares the efficiency in the days since with what last week's figures predict for the same outdoor temperatures, so a colder or milder week does not fool the comparison.",
+  curve_confidence: "How sure PredHeat is about the suggestion, from how many hours of steady heating it has seen, how consistent they were and how wide a range of outdoor temperatures they covered.",
   capacity_source: "The most heat the pump has been seen to deliver in a half hour, or the rated output from Settings when there is too little data.",
 };
 

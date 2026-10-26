@@ -4,6 +4,7 @@ import { PlanList, when } from "./plan";
 import { EnergyFlow } from "./flow";
 import { Term, tip } from "../glossary";
 import { YourHouse } from "./house";
+import { HeatingCurveCheck } from "./curve";
 
 const ago = (min: number | undefined) => (min == null ? "" : min < 1 ? "just now" : min < 90 ? `${Math.round(min)} min ago` : `${(min / 60).toFixed(1)} h ago`);
 
@@ -104,6 +105,11 @@ export default function OverviewPage() {
       <div className="section">
         <h2>Your house</h2>
         <YourHouse hl={o.heat_loss} hp={o.heat_pump} />
+      </div>
+      <div className="section">
+        <h2>Heating curve check</h2>
+        <p className="sources-line">Is your heat pump making the water hotter than your house needs? Checked from the last 14 days of your own data.</p>
+        <HeatingCurveCheck />
       </div>
       <div className="section">
         <h2>Heat pump energy today</h2>

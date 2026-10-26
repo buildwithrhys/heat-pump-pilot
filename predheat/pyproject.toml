@@ -1,6 +1,6 @@
 [project]
 name = "predheat"
-version = "0.3.1"
+version = "0.4.0"
 description = "PredHeat: self-learning heat pump and home energy optimiser (Home Assistant proof of concept)"
 readme = "DOCS.md"
 requires-python = ">=3.12"

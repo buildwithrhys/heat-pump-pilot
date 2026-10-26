@@ -242,6 +242,38 @@ def create_app(settings: Settings | None = None, platform: Platform | None = Non
             rows = repo_samples(s, p.property_id, signal, now - timedelta(hours=hours), now)
         return {"signal": signal, "hours": hours, "count": len(rows), "samples": rows}
 
+    @app.get("/api/heating-curve")
+    async def heating_curve(days: int = Query(14, ge=3, le=60)):
+        """Heating curve check: what the house needs against what the controller asks for. Advice only."""
+        p = plat()
+        from ..db import session_scope
+
+        with session_scope(p.settings.database_url) as s:
+            return p.heating_curve_check(s, days=days)
+
+    @app.post("/api/heating-curve/apply")
+    async def heating_curve_apply(body: dict = Body(...)):
+        """Change one Vaillant setting at the user's explicit request from the heating curve check."""
+        p = plat()
+        from ..db import session_scope
+
+        try:
+            with session_scope(p.settings.database_url) as s:
+                return await p.apply_curve_setting(s, str(body.get("setting")), float(body.get("value")))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/heating-curve/undo")
+    async def heating_curve_undo(body: dict = Body(...)):
+        p = plat()
+        from ..db import session_scope
+
+        try:
+            with session_scope(p.settings.database_url) as s:
+                return await p.undo_curve_setting(s, str(body.get("setting")))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @app.get("/api/diagnostics/report")
     async def diagnostics(days: int = Query(30, ge=1, le=90), raw_days: int = Query(3, ge=1, le=14), download: bool = Query(False)):
         """Raw stored readings, derived half-hours (this release and 0.3.0), discards, daily totals."""

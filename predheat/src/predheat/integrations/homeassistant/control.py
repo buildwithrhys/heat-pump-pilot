@@ -1,9 +1,11 @@
 """The one place PredHeat writes to Home Assistant.
 
 Kept separate from the read-only client on purpose: nothing else imports this
-module, and it offers exactly one capability, setting a target temperature on
-the climate entity or the water_heater entity the user named. Every call goes
-through ``Controller`` which logs it.
+module, and it offers two capabilities: setting a target temperature on the
+climate entity or the water_heater entity the user named (through ``Controller``,
+under its guards), and setting one of the three Vaillant heating-curve number
+entities when the user confirms a change on the heating curve check (through
+``Platform.apply_curve_setting``, bounded and logged, with undo).
 """
 
 from __future__ import annotations
@@ -35,6 +37,23 @@ class HAControlAdapter:
         r.raise_for_status()
 
 
+    async def current_state(self, entity_id: str) -> float | None:
+        r = await self.client._http.get(f"/api/states/{entity_id}")
+        r.raise_for_status()
+        try:
+            return float(r.json().get("state"))
+        except (TypeError, ValueError):
+            return None
+
+    async def set_number(self, entity_id: str, value: float) -> None:
+        """Set a number entity (heating curve, minimum flow, outdoor cut-off). Only ever called
+        from an explicit, confirmed request on the heating curve check."""
+        if not entity_id.startswith("number."):
+            raise ValueError("only number entities can be set this way")
+        r = await self.client._http.post("/api/services/number/set_value", json={"entity_id": entity_id, "value": value})
+        r.raise_for_status()
+
+
 class RecordingControlAdapter:
     """Test and simulation stand-in: remembers targets, writes nothing anywhere."""
 
@@ -54,3 +73,14 @@ class RecordingControlAdapter:
             raise RuntimeError("simulated write failure")
         self.targets[entity_id] = round(temperature, 1)
         self.calls.append((entity_id, round(temperature, 1)))
+
+    async def current_state(self, entity_id: str) -> float | None:
+        return self.targets.get(entity_id)
+
+    async def set_number(self, entity_id: str, value: float) -> None:
+        if not entity_id.startswith("number."):
+            raise ValueError("only number entities can be set this way")
+        if self.fail:
+            raise RuntimeError("simulated write failure")
+        self.targets[entity_id] = value
+        self.calls.append((entity_id, value))

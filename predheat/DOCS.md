@@ -12,7 +12,7 @@ The first start discovers your entities and backfills a week of history, which t
 
 ## The dashboard
 
-**Overview.** Live temperatures and heat pump state, today's costs split into space heating and hot water, what PredHeat would do next, your house's heat loss figure, and a diagram of where today's energy went.
+**Overview.** Live temperatures and heat pump state, today's costs split into space heating and hot water, what PredHeat would do next, your house's heat loss figure, the heating curve check, and a diagram of where today's energy went.
 
 **Energy costs.** Costs by day for the last 7 to 90 days, priced at the tariff rate in force in each half hour, with COP and cost per kWh of heat. The flow diagram covers the chosen period.
 
@@ -31,6 +31,21 @@ PredHeat fits a single-zone building model to the last 14 days of indoor tempera
 Once learned, the headline is kilowatts at the design outdoor temperature for your region, the way an installer's survey quotes it, with 21 °C inside, plus the likely range. Enter your surveyed figure in Settings and the two are shown side by side; a difference over 25% is flagged, because it usually means either the survey or the sensor placement deserves a look. Enter the heat pump's rated output and the card says how much margin it has. "How fast it cools" is the indoor temperature drop per hour with the heating off at 5 °C outside. The watts-per-degree figure, time constant and thermal capacity are on the System health tab under Learned models.
 
 Efficiency is the observed average COP over the period, the heat delivered divided by the electricity used from the controller's own counters, shown separately for space heating and hot water with the outdoor range it covers. It can differ from the Vaillant app because the period, the split by end use and the absence of normalisation differ.
+
+## The heating curve check
+
+The heating curve on your Vaillant controller decides how hot the radiator water is for each outdoor temperature. Water hotter than the house needs costs money: the heat pump is roughly 2 to 3% less efficient for every degree of extra flow temperature. The check, on the Overview under Your house, works out what your house actually needs from your own data:
+
+1. From the hours when the heat pump was heating the house steadily, it measures how much heat your radiators give out at the water temperatures they ran at.
+2. From your learned heat loss it knows how much heat the house needs at each outdoor temperature.
+3. Together these give the water temperature the house needs, plus a 1 °C margin. The chart shows that against what your controller asks for now and what it would ask for with the suggested setting.
+4. It cross-checks against comfort: a room above setpoint with the compressor starting more than twice an hour means the water is hotter than needed; a room below setpoint with the heat pump running flat out means it is not hot enough, and the check then suggests raising the curve, never lowering it.
+
+It also looks at the minimum flow temperature (too high overrides the curve on mild days) and the outdoor cut-off (above which your house's own heat gains keep it warm).
+
+**Changing a setting.** When Home Assistant offers the setting as an adjustable entity (myVAILLANT does on most systems), the table has a Change button. PredHeat shows exactly which entity and values it will set and changes it once, only when you confirm. It never changes these settings by itself. Each request is limited to the entity's own range and to a sensible step (0.5 on the curve), is recorded in the control log, and can be undone from the same place. Without an adjustable entity, change it in the myVAILLANT app.
+
+After a change the check looks only at heating since the change, so it judges the new setting, and "Since your last change" compares efficiency with what the week before predicted for the same weather, plus whether the rooms were warmer or cooler. Go one step at a time and give each step a few days, including a cold spell before going lower again.
 
 ## What PredHeat would do
 

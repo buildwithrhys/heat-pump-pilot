@@ -43,3 +43,29 @@ def test_platform_comparison_ranks_tariffs(tmp_path):
     assert len(replayable) >= 4
     assert replayable == sorted(replayable, key=lambda r: r["total_pence"])
     assert any(not r.get("replayable") for r in cmp_["results"])  # Agile listed as not replayable
+
+
+def test_current_tariff_row_uses_what_you_actually_paid(tmp_path):
+    """0.3.1 shipped this fix in a method that a stale copy further down the class shadowed."""
+    settings = Settings(data_mode=DataMode.SIMULATED, database_url=f"sqlite:///{tmp_path / 't.sqlite'}", sim_days=8, sim_seed=2, data_dir=tmp_path)
+    p = build_platform(settings)
+    asyncio.run(p.bootstrap())
+    with session_scope(settings.database_url) as s:
+        cmp_ = p.compare_tariffs(s, days=7)
+    assert cmp_["actual"]["coverage_pct"] == 100.0 and "kwh_compared" in cmp_
+    current = next(r for r in cmp_["results"] if r.get("current"))
+    assert current["total_pence"] == cmp_["actual"]["total_pence"]
+    assert cmp_["reconciliation"] is not None
+
+
+def test_platform_defines_each_method_once():
+    import ast
+    import collections
+    import inspect
+
+    from predheat.service import platform
+
+    tree = ast.parse(inspect.getsource(platform))
+    for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
+        names = collections.Counter(f.name for f in cls.body if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)))
+        assert not [k for k, v in names.items() if v > 1], cls.name

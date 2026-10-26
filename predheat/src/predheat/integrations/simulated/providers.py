@@ -64,6 +64,19 @@ class SimulatedTelemetryProvider:
     def __init__(self, home: SimulatedHome, clock: "SimClock"):
         self.home = home
         self.clock = clock
+        # The three Vaillant settings the heating curve check can change, as Home Assistant would
+        # offer them. Writes land here through the recording adapter; the simulated house's
+        # physics do not respond to them.
+        from ..homeassistant.client import HAState
+
+        cfg = home.cfg
+        self.last_states = {
+            "number.sim_circuit_0_heating_curve": HAState("number.sim_circuit_0_heating_curve", str(cfg.heating_curve), {"min": 0.1, "max": 4.0, "step": 0.05}, platform="mypyllant"),
+            "number.sim_circuit_0_min_flow_temperature_setpoint": HAState("number.sim_circuit_0_min_flow_temperature_setpoint", str(cfg.min_flow_c),
+                                                                          {"min": 15, "max": 80, "step": 1}, platform="mypyllant"),
+            "number.sim_circuit_0_heat_demand_limited_by_outside_temperature": HAState("number.sim_circuit_0_heat_demand_limited_by_outside_temperature", "17",
+                                                                                       {"min": 10, "max": 25, "step": 1}, platform="mypyllant"),
+        }
 
     async def discover(self) -> CapabilityReport:
         caps = []
@@ -90,6 +103,9 @@ class SimulatedTelemetryProvider:
                 continue
             out.append(Measurement(signal=sig, ts=rec["ts"], value=float(v), quality=_Q, provenance=_P, source_ref=f"sim:{key}"))
         out.append(Measurement(signal=Signal.HP_OPERATING_STATE, ts=rec["ts"], text=rec["mode"], quality=_Q, provenance=_P, source_ref="sim:mode"))
+        for sig, eid in ((Signal.HEATING_CURVE, "number.sim_circuit_0_heating_curve"), (Signal.MIN_FLOW_SETPOINT, "number.sim_circuit_0_min_flow_temperature_setpoint"),
+                         (Signal.HEAT_DEMAND_LIMIT_OUTDOOR, "number.sim_circuit_0_heat_demand_limited_by_outside_temperature")):
+            out.append(Measurement(signal=sig, ts=rec["ts"], value=float(self.last_states[eid].state), quality=_Q, provenance=_P, source_ref=eid))
         return out
 
     async def read_measurements(self) -> list[Measurement]:
@@ -165,6 +181,19 @@ class SimulatedWeatherProvider:
     def __init__(self, home: SimulatedHome, clock: "SimClock"):
         self.home = home
         self.clock = clock
+        # The three Vaillant settings the heating curve check can change, as Home Assistant would
+        # offer them. Writes land here through the recording adapter; the simulated house's
+        # physics do not respond to them.
+        from ..homeassistant.client import HAState
+
+        cfg = home.cfg
+        self.last_states = {
+            "number.sim_circuit_0_heating_curve": HAState("number.sim_circuit_0_heating_curve", str(cfg.heating_curve), {"min": 0.1, "max": 4.0, "step": 0.05}, platform="mypyllant"),
+            "number.sim_circuit_0_min_flow_temperature_setpoint": HAState("number.sim_circuit_0_min_flow_temperature_setpoint", str(cfg.min_flow_c),
+                                                                          {"min": 15, "max": 80, "step": 1}, platform="mypyllant"),
+            "number.sim_circuit_0_heat_demand_limited_by_outside_temperature": HAState("number.sim_circuit_0_heat_demand_limited_by_outside_temperature", "17",
+                                                                                       {"min": 10, "max": 25, "step": 1}, platform="mypyllant"),
+        }
 
     async def forecast(self, hours: int = 48) -> list[WeatherPoint]:
         """A 'forecast' = the simulator's future truth plus error growing with lead time."""
@@ -198,6 +227,19 @@ class SimulatedSolarProvider:
     def __init__(self, home: SimulatedHome, clock: "SimClock"):
         self.home = home
         self.clock = clock
+        # The three Vaillant settings the heating curve check can change, as Home Assistant would
+        # offer them. Writes land here through the recording adapter; the simulated house's
+        # physics do not respond to them.
+        from ..homeassistant.client import HAState
+
+        cfg = home.cfg
+        self.last_states = {
+            "number.sim_circuit_0_heating_curve": HAState("number.sim_circuit_0_heating_curve", str(cfg.heating_curve), {"min": 0.1, "max": 4.0, "step": 0.05}, platform="mypyllant"),
+            "number.sim_circuit_0_min_flow_temperature_setpoint": HAState("number.sim_circuit_0_min_flow_temperature_setpoint", str(cfg.min_flow_c),
+                                                                          {"min": 15, "max": 80, "step": 1}, platform="mypyllant"),
+            "number.sim_circuit_0_heat_demand_limited_by_outside_temperature": HAState("number.sim_circuit_0_heat_demand_limited_by_outside_temperature", "17",
+                                                                                       {"min": 10, "max": 25, "step": 1}, platform="mypyllant"),
+        }
 
     async def forecast(self, hours: int = 48) -> list[SolarPoint]:
         now = self.clock.now()
