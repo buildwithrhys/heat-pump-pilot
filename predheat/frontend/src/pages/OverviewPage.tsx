@@ -20,10 +20,10 @@ function Tile({ title, reading, unit = "", dp = 1, sub }: { title: string; readi
 function CostTile({ title, pence, kwh, cop, quality, complete }: { title: string; pence: number; kwh: number; cop?: number | null; quality: string; complete?: boolean }) {
   return (
     <div className="card">
-      <h3>{title}<span className={`tag ${quality}`}>{quality}</span></h3>
+      <h3>{title}</h3>
       <div className="big">{pounds(pence)}</div>
       <div className="sub">
-        {num(kwh, 1, " kWh")}{cop ? ` · COP ${cop.toFixed(1)}` : ""}{complete === false ? " · prices incomplete" : ""}
+        {num(kwh, 1, " kWh")}{cop ? ` · COP ${cop.toFixed(1)}` : ""}{complete === false ? " · prices incomplete" : ""}<span className={`tag ${quality}`}>{quality}</span>
       </div>
     </div>
   );
@@ -92,7 +92,7 @@ export default function OverviewPage() {
           <div className="big" style={{ fontSize: "1.1rem" }}>{o.next_action.kind === "none" ? "Nothing to shift" : o.next_action.label ?? o.next_action.kind}</div>
           <div className="sub">{o.next_action.start && o.next_action.end ? `${when(o.next_action.start, o.next_action.end)} · ` : ""}{o.next_action.reason}</div>
         </div>
-        <PlanList plan={o.plan} compact />
+        <PlanList plan={o.plan} compact skipKey={o.next_action.start ? `${o.next_action.kind}|${o.next_action.start}` : undefined} />
       </div>
       <div className="section">
         <h2>Your house</h2>
@@ -106,7 +106,7 @@ export default function OverviewPage() {
               </>
             ) : (
               <>
-                <div className="big" style={{ fontSize: "1.1rem" }}>Learning</div>
+                <div className="big" style={{ fontSize: "1.1rem" }}>Still learning</div>
                 <div className="sub">{o.heat_loss.reason}</div>
               </>
             )}

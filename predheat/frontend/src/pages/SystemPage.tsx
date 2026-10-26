@@ -39,9 +39,9 @@ export default function SystemPage() {
       </div>
 
       {s.missing_for_thermal_model.length > 0 && (
-        <div className="note">Thermal modelling cannot start: missing {s.missing_for_thermal_model.join(", ")}.</div>
+        <div className="note urgent">Thermal modelling cannot start: missing {s.missing_for_thermal_model.join(", ")}.</div>
       )}
-      {s.warnings.map((w, i) => <div className="note" key={i}>{w}</div>)}
+      {s.warnings.map((w, i) => <div className={`note ${/competing|EnergyPLUS|EEBUS|not exposed/i.test(w) ? "warn" : ""}`} key={i}>{w}</div>)}
 
       <div className="section">
         <h2>Providers</h2>
@@ -72,7 +72,7 @@ export default function SystemPage() {
               <td>{x.signal}</td>
               <td><span className={`tag ${x.status === "available" ? (x.stale ? "bad" : "measured") : x.status === "degraded" ? "estimated" : ""}`}>{x.stale ? "stale" : x.status}</span></td>
               <td className="muted">{x.quality}</td>
-              <td className="muted" style={{ fontSize: "0.78rem", wordBreak: "break-all" }}>{x.source ?? ""}</td>
+              <td className="mono muted" title={x.source ?? ""}>{x.source ? x.source.replace(/_/g, "_\u200b") : ""}</td>
               <td className="num">{x.last_text ?? (x.last_value != null ? x.last_value.toFixed(2) : "")}</td>
               <td className="num">{x.age_minutes ?? ""}</td>
               <td className="muted">{x.notes}</td>

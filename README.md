@@ -30,7 +30,7 @@ Out of the box PredHeat only watches and advises. Letting it move your setpoint 
 
 1. Click the badge above, or in Home Assistant go to **Settings → Add-ons → Add-on store → ⋮ → Repositories** and add `https://github.com/buildwithrhys/predheat`.
 2. Find **PredHeat** in the store and click **Install**. The image is built on your machine and takes a few minutes.
-3. On the add-on page, switch on **Show in sidebar**, then click **Start**.
+3. On the add-on page, switch on **Show in sidebar** and, if you like, **Update automatically**, then click **Start**. Home Assistant leaves both off for every add-on.
 4. Open **PredHeat** from the sidebar.
 
 No access token is needed. The add-on reads Home Assistant through the Supervisor.
@@ -49,10 +49,10 @@ Any heat pump, tariff, weather and solar source that is already in Home Assistan
 
 ## Settings
 
-The add-on's configuration page explains every option. The two that matter:
+The add-on's Configuration tab holds only install-time and safety settings: data source, collection interval, log level, allow control and the climate entity. Everything you adjust while using PredHeat, the operating mode, the setpoint offset and the gas comparison, is on the dashboard's Settings tab and applies without a restart.
 
 - **Data source**: `home_assistant` for live data, `simulated` to explore the dashboard with a synthetic house.
-- **Operating mode**: `monitor` records, prices and advises. `shadow` also saves every plan for scoring. `balanced` and `max_savings` allow control, together with "Allow control" and a climate entity.
+- **Operating mode**: Monitor records, prices and advises. Shadow also saves every plan for scoring. Balanced and Max savings allow control, once Allow control and a climate entity are set.
 
 Full details are in [predheat/DOCS.md](predheat/DOCS.md).
 

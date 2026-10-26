@@ -1,7 +1,7 @@
 name: PredHeat
-version: "0.2.0"
+version: "0.2.1"
 slug: predheat
-description: Self-learning heat pump and home energy optimiser. Read-only monitoring in this release.
+description: Self-learning heat pump and home energy optimiser.
 url: https://github.com/buildwithrhys/predheat
 arch:
   - aarch64
@@ -22,26 +22,12 @@ ports_description:
   8750/tcp: Direct access to the API and dashboard. Optional, the sidebar panel uses ingress.
 options:
   data_mode: home_assistant
-  operating_mode: monitor
   poll_seconds: 300
   log_level: info
-  gas_price_p_per_kwh: 6.24
-  boiler_efficiency: 0.85
+  control_enabled: false
 schema:
-  data_mode: list(simulated|home_assistant)
-  operating_mode: list(monitor|shadow|balanced|max_savings)
-  control_enabled: bool?
-  control_climate_entity: str?
-  control_max_offset_c: float(0.5,2.0)?
+  data_mode: list(home_assistant|simulated)
   poll_seconds: int(60,3600)
   log_level: list(debug|info|warning|error)
-  gas_price_p_per_kwh: float(0,50)
-  boiler_efficiency: float(0.5,1.0)
-  latitude: float?
-  longitude: float?
-  octopus_api_key: password?
-  octopus_account: str?
-  openweather_api_key: password?
-  solcast_api_key: password?
-  sim_days: int(1,90)?
-  sim_seed: int?
+  control_enabled: bool
+  control_climate_entity: str?

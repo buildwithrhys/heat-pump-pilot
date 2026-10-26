@@ -115,10 +115,9 @@ def test_platform_runs_controller_in_poll_and_releases_on_demand(tmp_path):
     assert not p.controller.holding
 
 
-def test_addon_forces_control_off_without_mode_and_entity():
+def test_addon_forces_control_off_without_entity():
     from predheat.addon import env_from_options
 
-    assert env_from_options({"control_enabled": True, "operating_mode": "shadow", "control_climate_entity": "climate.x"}, None)["PREDHEAT_CONTROL_ENABLED"] == "false"
-    assert env_from_options({"control_enabled": True, "operating_mode": "balanced"}, None)["PREDHEAT_CONTROL_ENABLED"] == "false"
-    env = env_from_options({"control_enabled": True, "operating_mode": "balanced", "control_climate_entity": "climate.x"}, None)
+    assert env_from_options({"control_enabled": True}, None)["PREDHEAT_CONTROL_ENABLED"] == "false"
+    env = env_from_options({"control_enabled": True, "control_climate_entity": "climate.x"}, None)
     assert env["PREDHEAT_CONTROL_ENABLED"] == "true" and env["PREDHEAT_CONTROL_CLIMATE_ENTITY"] == "climate.x"

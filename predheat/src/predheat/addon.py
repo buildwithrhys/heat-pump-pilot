@@ -23,24 +23,15 @@ DEFAULT_DATA_DIR = Path("/data")
 FRONTEND_DIR = Path("/app/static")
 
 # add-on option -> environment variable
+# Install-time and safety options only. Runtime preferences (operating mode, gas
+# comparison, setpoint offset) live in settings.json and the dashboard's Settings
+# tab; values left in options.json by older releases are migrated once at start.
 OPTION_ENV = {
     "data_mode": "PREDHEAT_DATA_MODE",
-    "operating_mode": "PREDHEAT_OPERATING_MODE",
     "poll_seconds": "PREDHEAT_HA_POLL_SECONDS",
     "log_level": "PREDHEAT_LOG_LEVEL",
-    "latitude": "PREDHEAT_LATITUDE",
-    "longitude": "PREDHEAT_LONGITUDE",
-    "octopus_api_key": "PREDHEAT_OCTOPUS_API_KEY",
-    "octopus_account": "PREDHEAT_OCTOPUS_ACCOUNT",
-    "openweather_api_key": "PREDHEAT_OPENWEATHER_API_KEY",
-    "solcast_api_key": "PREDHEAT_SOLCAST_API_KEY",
     "control_enabled": "PREDHEAT_CONTROL_ENABLED",
     "control_climate_entity": "PREDHEAT_CONTROL_CLIMATE_ENTITY",
-    "control_max_offset_c": "PREDHEAT_CONTROL_MAX_OFFSET_C",
-    "gas_price_p_per_kwh": "PREDHEAT_GAS_PRICE_P_PER_KWH",
-    "boiler_efficiency": "PREDHEAT_BOILER_EFFICIENCY",
-    "sim_days": "PREDHEAT_SIM_DAYS",
-    "sim_seed": "PREDHEAT_SIM_SEED",
 }
 
 
@@ -53,9 +44,10 @@ def env_from_options(
     """Build the environment for the server.
 
     Precedence: add-on options > environment already present > built-in defaults.
-    Control stays off unless the add-on option ``control_enabled`` is true AND the
-    operating mode is balanced or max_savings AND a climate entity is named; the
-    controller re-checks its guards on every cycle (see SAFETY.md).
+    Control stays impossible unless the add-on option ``control_enabled`` is true
+    AND a climate entity is named. Whether it acts also depends on the operating
+    mode chosen on the dashboard's Settings tab, and the controller re-checks its
+    guards on every cycle (see SAFETY.md).
     """
     env: dict[str, str] = {
         "PREDHEAT_DATA_DIR": str(data_dir),
@@ -78,9 +70,8 @@ def env_from_options(
             continue
         env[var] = str(value).lower() if isinstance(value, bool) else str(value)
     env["PREDHEAT_LOG_LEVEL"] = env["PREDHEAT_LOG_LEVEL"].upper()
-    mode = env.get("PREDHEAT_OPERATING_MODE", "monitor")
     wants_control = str(options.get("control_enabled", "")).lower() == "true"
-    if not (wants_control and mode in ("balanced", "max_savings") and options.get("control_climate_entity")):
+    if not (wants_control and options.get("control_climate_entity")):
         env["PREDHEAT_CONTROL_ENABLED"] = "false"
     return env
 

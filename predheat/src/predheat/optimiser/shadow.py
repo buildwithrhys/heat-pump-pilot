@@ -97,8 +97,8 @@ def build_shadow_plan(
     horizon_end = now + timedelta(hours=horizon_hours)
     priced = [s for s in slots if not math.isnan(s.rate_p_per_kwh) and s.end > now and s.start < horizon_end]
     assumptions = [
-        "Rule-based plan. The learned thermal model and optimiser (Phase 4) are not in use yet.",
-        "Setpoint changes of about 1 °C are assumed. Nothing is controlled; this is what PredHeat would do.",
+        "Rule-based plan: the learned house model is not in use yet.",
+        "Setpoint changes of about 1 °C are assumed. This is what PredHeat would do; it only acts if control is switched on.",
     ]
     base = {"horizon_start": now.isoformat(), "horizon_end": horizon_end.isoformat(), "assumptions": assumptions}
     if not priced:

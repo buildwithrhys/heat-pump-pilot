@@ -12,7 +12,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -30,7 +30,9 @@ def create_app(settings: Settings | None = None, platform: Platform | None = Non
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        p = state["platform"] or build_platform(settings)
+        from pathlib import Path as _P
+
+        p = state["platform"] or build_platform(settings, options_file=_P("/data/options.json"))
         state["platform"] = p
         if p.property_id is None:
             await p.bootstrap()
@@ -132,6 +134,42 @@ def create_app(settings: Settings | None = None, platform: Platform | None = Non
     async def poll():
         """Trigger a collection cycle (read-only against equipment)."""
         return await plat().poll_once()
+
+    @app.get("/api/settings")
+    async def get_settings_():
+        p = plat()
+        return p.settings_store.describe(p.settings)
+
+    @app.put("/api/settings")
+    async def put_settings(changes: dict = Body(...)):
+        """Update runtime preferences. Applies immediately; no restart."""
+        from ..service.settings_store import SettingsError
+
+        p = plat()
+        before = p.settings.operating_mode
+        try:
+            p.settings_store.update(changes, p.settings)
+        except SettingsError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        p._memo.clear()
+        if before != p.settings.operating_mode and before.value in ("balanced", "max_savings"):
+            await p.release_control(f"operating mode changed to {p.settings.operating_mode.value}")
+        return p.settings_store.describe(p.settings)
+
+    @app.post("/api/settings/reset")
+    async def reset_settings(key: str | None = Query(None)):
+        from ..service.settings_store import SettingsError
+
+        p = plat()
+        before = p.settings.operating_mode
+        try:
+            p.settings_store.reset(key, p.settings)
+        except SettingsError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        p._memo.clear()
+        if before != p.settings.operating_mode and before.value in ("balanced", "max_savings"):
+            await p.release_control("operating mode reset")
+        return p.settings_store.describe(p.settings)
 
     @app.get("/api/tariffs")
     async def tariffs(days: int = Query(30, ge=7, le=365)):

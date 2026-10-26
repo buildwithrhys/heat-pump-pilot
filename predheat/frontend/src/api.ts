@@ -14,6 +14,16 @@ async function get<T>(path: string): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+async function send<T>(method: "PUT" | "POST", path: string, body?: unknown): Promise<T> {
+  const r = await fetch(url(path), { method, headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (!r.ok) {
+    let detail = `${r.status}`;
+    try { detail = (await r.json()).detail ?? detail; } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+  return r.json() as Promise<T>;
+}
+
 export interface Reading {
   value: number | null;
   text: string | null;
@@ -132,7 +142,7 @@ export interface ForecastAccuracy {
 }
 
 export interface HeatLoss {
-  status: "ok" | "insufficient_data" | "not_identified";
+  status: "ok" | "learning" | "insufficient_data" | "not_identified";
   reason?: string;
   samples: number;
   window_start: string;
@@ -174,7 +184,9 @@ export interface TariffComparison {
   source?: string;
   kwh?: number;
   rates_as_of?: string;
-  actual?: { code: string; name: string; unit_pence: number; standing_pence: number; total_pence: number; kwh: number; prices_complete: boolean; effective_p_per_kwh: number; difference_vs_best_pence?: number } | null;
+  region?: string | null;
+  region_name?: string | null;
+  actual?: { code: string; name: string; unit_pence: number; standing_pence: number; total_pence: number; kwh: number; prices_complete: boolean; effective_p_per_kwh: number; difference_vs_best_pence?: number; product?: string | null; on_cheapest?: boolean } | null;
   results: TariffResult[];
   caveats?: string[];
 }
@@ -190,6 +202,26 @@ export interface ControlStatus {
   last?: { status: string; reason: string; target_c: number | null; mode: string | null } | null;
   max_offset_c?: number;
   mode?: string;
+}
+
+export interface SettingsField {
+  type: "enum" | "number";
+  default: number | string;
+  choices?: string[];
+  labels?: Record<string, string>;
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
+  label: string;
+  help: string;
+}
+
+export interface SettingsDoc {
+  values: Record<string, number | string>;
+  fields: Record<string, SettingsField>;
+  gate: { allow_control: boolean; climate_entity: string | null; control_possible: boolean; message: string | null };
+  effective: { operating_mode: string; control_enabled: boolean; climate_entity: string | null; data_mode: string };
 }
 
 export const MODE_LABEL: Record<string, string> = { monitor: "Monitor mode", shadow: "Shadow mode", balanced: "Balanced", max_savings: "Max savings" };
@@ -261,9 +293,13 @@ export const api = {
   accuracy: (days = 7) => get<ForecastAccuracy>(`/api/accuracy?days=${days}`),
   tariffs: (days = 30) => get<TariffComparison>(`/api/tariffs?days=${days}`),
   controlStatus: () => get<ControlStatus>("/api/control-status"),
+  settings: () => get<SettingsDoc>("/api/settings"),
+  saveSettings: (changes: Record<string, number | string>) => send<SettingsDoc>("PUT", "/api/settings", changes),
+  resetSetting: (key?: string) => send<SettingsDoc>("POST", `/api/settings/reset${key ? `?key=${key}` : ""}`),
 };
 
+const gb = (v: number, dp: number) => v.toLocaleString("en-GB", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 export const pounds = (pence: number | null | undefined) =>
-  pence == null ? "–" : `£${(pence / 100).toFixed(2)}`;
+  pence == null ? "–" : `£${gb(pence / 100, 2)}`;
 export const num = (v: number | null | undefined, dp = 1, unit = "") =>
-  v == null ? "–" : `${v.toFixed(dp)}${unit}`;
+  v == null ? "–" : `${gb(v, dp)}${unit}`;

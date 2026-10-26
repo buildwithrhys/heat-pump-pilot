@@ -10,9 +10,11 @@ export function when(start: string, end: string): string {
   return `${fmt(start, !sameDay)} to ${fmt(end, false)}`;
 }
 
-export function PlanList({ plan, compact = false }: { plan: ShadowPlan; compact?: boolean }) {
+export function PlanList({ plan, compact = false, skipKey }: { plan: ShadowPlan; compact?: boolean; skipKey?: string }) {
   if (plan.status === "not_available") return <p className="muted">{plan.reason}</p>;
+  const actions = skipKey ? plan.actions.filter((a) => `${a.kind}|${a.start}` !== skipKey) : plan.actions;
   if (plan.actions.length === 0) return <p className="muted">Nothing worth shifting in the next 24 hours. {plan.reason}</p>;
+  if (actions.length === 0) return <p className="muted" style={{ fontSize: 12 }}>That is the only action in the next 24 hours.</p>;
   return (
     <div className="tablewrap">
       {plan.cost && (
@@ -25,7 +27,7 @@ export function PlanList({ plan, compact = false }: { plan: ShadowPlan; compact?
           <tr><th>When</th><th>Action</th>{!compact && <th>Rate</th>}<th>Why</th></tr>
         </thead>
         <tbody>
-          {plan.actions.map((a, i) => (
+          {actions.map((a, i) => (
             <tr key={i}>
               <td style={{ whiteSpace: "nowrap" }}>{when(a.start, a.end)}</td>
               <td style={{ whiteSpace: "nowrap" }}><span className={`tag ${a.kind}`}>{a.label}</span></td>

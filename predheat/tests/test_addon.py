@@ -22,14 +22,13 @@ def test_supervisor_env_is_derived_from_token():
 
 def test_options_map_to_env_and_override_existing():
     options = {"data_mode": "home_assistant", "poll_seconds": 120, "log_level": "debug",
-               "latitude": 51.5, "octopus_api_key": "", "solcast_api_key": None}
+               "latitude": 51.5, "control_climate_entity": ""}
     env = env_from_options(options, "tok", Path("/data"), existing={"PREDHEAT_HA_POLL_SECONDS": "900", "HOME": "/root"})
     assert env["PREDHEAT_DATA_MODE"] == "home_assistant"
     assert env["PREDHEAT_HA_POLL_SECONDS"] == "120"  # option beats existing env
     assert env["PREDHEAT_LOG_LEVEL"] == "DEBUG"
-    assert env["PREDHEAT_LATITUDE"] == "51.5"
-    assert "PREDHEAT_OCTOPUS_API_KEY" not in env  # empty options are not exported
-    assert "PREDHEAT_SOLCAST_API_KEY" not in env
+    assert "PREDHEAT_LATITUDE" not in env  # location comes from Home Assistant now
+    assert "PREDHEAT_CONTROL_CLIMATE_ENTITY" not in env  # empty options are not exported
     assert "HOME" not in env
 
 

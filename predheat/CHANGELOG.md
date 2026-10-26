@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Fixed: whole-home import, costs, the Tariffs tab and the heat loss fit were inflated by lifetime meter readings. Hourly history rows were stamped at the start of the hour while carrying the end-of-hour value, so interleaved live readings looked like meter resets and the full register value was added each hour. History is now stamped correctly, a decrease only counts as a reset when the counter restarts near zero, and mis-stamped rows from earlier releases are removed on first start and re-fetched.
+- The add-on Configuration tab now holds five options: data source, collection interval, log level, allow control, climate entity. Operating mode, setpoint offset, gas price and boiler efficiency moved to a new Settings tab in the dashboard and apply without a restart. Earlier values are migrated once. Location and time zone come from Home Assistant. The unused API key options are gone until a release uses them.
+- Dashboard: wider layout, thousands separators, UK dates on the costs chart, dashes for days without data and a flag for days with missing prices, aligned forecast axes, heat loss shown as "still learning" until the range excludes zero, energy flow stays readable when the rest of the home dwarfs the heat pump, Tariffs tab identifies your current product correctly and shows your region, System health source column no longer wraps letter by letter and banners carry severity.
+- Derived figures are cached between polls, so the Forecast and Tariffs tabs open at once.
+
 ## 0.2.0
 
 - Model-based optimiser: a 24-hour dynamic programme on the fitted building and heat pump models, prices and weather. Explains each action, predicts the indoor temperature, and reports the saving against a plain thermostat on the same model. Takes over from the rule-based plan automatically once the building model is identified.

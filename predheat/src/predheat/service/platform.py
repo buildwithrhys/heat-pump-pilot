@@ -10,6 +10,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from ..analytics import allocate_heat_pump_categories, counter_to_intervals, reconcile
@@ -21,7 +22,7 @@ from ..domain import CapabilityReport, Measurement, Provenance, Quality, RateInt
 from ..integrations.base import ProviderHealth
 from ..model import COPModel, fit_cop_model, fit_rc_model, prior_cop_model, survey_to_coefficient
 from ..optimiser import MPCInputs, build_mpc_plan, build_shadow_plan
-from ..pricing import RATES_AS_OF, PriceClass, SlotPrice, build_rate_book, classify_slots, load_templates, replay, standing_charge_for_period
+from ..pricing import RATES_AS_OF, REGION_NAMES, PriceClass, SlotPrice, build_rate_book, classify_slots, load_templates, replay, standing_charge_for_period
 from ..timeutils import LONDON, local_day_bounds, now_utc
 from . import repository as repo
 
@@ -41,16 +42,47 @@ class Platform:
     last_poll: dict[str, Any] = field(default_factory=dict)
     simulated_home: Any = None
     controller: Any = None
+    settings_store: Any = None
+    _memo: dict[tuple, Any] = field(default_factory=dict)
+
+    def _cached(self, key: tuple, compute):
+        """Cache a derived result until the next poll changes the data. Keeps the
+        dashboard tabs instant instead of re-fitting models on every request."""
+        stamp = self.last_poll.get("at")
+        full = (stamp,) + key
+        if full in self._memo:
+            return self._memo[full]
+        if len(self._memo) > 64:
+            self._memo.clear()
+        value = compute()
+        self._memo[full] = value
+        return value
 
     # ------------------------------------------------------------------ lifecycle
     async def bootstrap(self, backfill_days: int | None = None) -> None:
         init_db(self.settings.database_url)
+        if self.settings.data_mode == DataMode.HOME_ASSISTANT and (self.settings.latitude is None or self.settings.longitude is None):
+            try:
+                cfg = await self.telemetry.client.config()
+                self.settings.latitude = cfg.get("latitude", self.settings.latitude)
+                self.settings.longitude = cfg.get("longitude", self.settings.longitude)
+                if cfg.get("time_zone"):
+                    self.settings.timezone = cfg["time_zone"]
+                log.info("home location and time zone taken from Home Assistant")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("could not read home location from Home Assistant: %s", exc)
         with session_scope(self.settings.database_url) as s:
             prop = repo.ensure_property(s, "Pilot property", self.settings.timezone,
                                         latitude=self.settings.latitude, longitude=self.settings.longitude)
+            if self.settings.latitude is not None and prop.latitude != self.settings.latitude:
+                prop.latitude, prop.longitude = self.settings.latitude, self.settings.longitude
             self.property_id = prop.id
             if self.controller is not None:
                 self.controller.property_id = prop.id
+            purged = repo.purge_misstamped_history(s, self.property_id)
+            if purged:
+                log.warning("removed %d mis-stamped history rows from an earlier release; re-backfilling", purged)
+                repo.log_quality_event(s, self.property_id, "info", "migration", f"removed {purged} mis-stamped history rows; counters re-derived")
         self.capability_report = await self.telemetry.discover()
         with session_scope(self.settings.database_url) as s:
             for cap in self.capability_report.capabilities:
@@ -154,6 +186,11 @@ class Platform:
 
     # ------------------------------------------------------------------ heat loss (1R1C fit)
     def thermal_estimate(self, s, days: int = 14, now: datetime | None = None) -> dict[str, Any]:
+        now = now or self.clock.now()
+        return self._cached(("thermal", days, now.replace(minute=now.minute - now.minute % 5, second=0, microsecond=0)),
+                            lambda: self._thermal_estimate(s, days, now))
+
+    def _thermal_estimate(self, s, days: int, now: datetime) -> dict[str, Any]:
         """Fit the single-zone building model to recent history and report the heat loss.
 
         Inputs are resampled onto a half-hour grid: indoor and outdoor temperature
@@ -162,7 +199,6 @@ class Platform:
         solar proxy when present. The survey heat loss, if recorded on the property,
         acts as a weak prior. Everything here is read-only.
         """
-        now = now or self.clock.now()
         end = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
         start = end - timedelta(days=days)
         step = timedelta(minutes=30)
@@ -203,6 +239,12 @@ class Platform:
             return {**base, "status": "not_identified", "reason": "The data so far does not pin down a physical heat loss. " + "; ".join(fit.notes or [])}
         ua = fit.ua_w_per_k
         cap = fit.capacity_kwh_per_k if math.isfinite(fit.capacity_kwh_per_k) else None
+        ci_low = fit.ua_ci_low if fit.ua_ci_low is not None else -1.0
+        if fit.confidence < 0.2 or ci_low <= 0 or ua > 2000:
+            return {**base, "status": "learning", "confidence": round(fit.confidence, 2),
+                    "reason": f"Fitted so far: {ua:.0f} W/K, but the range still includes zero or the confidence is {fit.confidence:.0%}. "
+                              "More days with heating on and varied outdoor temperature will narrow it."
+                              + (" " + "; ".join(fit.notes) if fit.notes else "")}
         return {**base, "status": "ok", "heat_loss_w_per_k": round(ua, 1),
                 "ci_low_w_per_k": round(fit.ua_ci_low, 1) if fit.ua_ci_low is not None else None,
                 "ci_high_w_per_k": round(fit.ua_ci_high, 1) if fit.ua_ci_high is not None else None,
@@ -236,8 +278,11 @@ class Platform:
 
     # ------------------------------------------------------------------ tariff comparison
     def compare_tariffs(self, s, days: int = 30, now: datetime | None = None) -> dict[str, Any]:
-        """Replay the last ``days`` of half-hourly import on each tariff template."""
         now = now or self.clock.now()
+        return self._cached(("tariffs", days, now.date()), lambda: self._compare_tariffs(s, days, now))
+
+    def _compare_tariffs(self, s, days: int, now: datetime) -> dict[str, Any]:
+        """Replay the last ``days`` of half-hourly import on each tariff template."""
         today = now.astimezone(LONDON).date()
         start, _ = local_day_bounds(today - timedelta(days=days))
         _, end = local_day_bounds(today - timedelta(days=1))
@@ -293,12 +338,16 @@ class Platform:
             results.append(r)
         ranked = sorted([r for r in results if r.get("replayable")], key=lambda r: r["total_pence"])
         best = ranked[0] if ranked else None
+        region = tariff_code.rsplit("-", 1)[-1] if tariff_code and "-" in tariff_code else None
         if actual and best:
             actual["difference_vs_best_pence"] = round(actual["total_pence"] - best["total_pence"], 1)
+            actual["product"] = next((r["code"] for r in ranked if r["code"] in (tariff_code or "")), None)
+            actual["on_cheapest"] = actual["product"] == best["code"]
         return {"status": "ok", "days": days, "period": {"start": start.isoformat(), "end": end.isoformat()}, "source": source,
-                "kwh": round(total_kwh, 2), "rates_as_of": RATES_AS_OF, "actual": actual, "results": ranked + [r for r in results if not r.get("replayable")],
+                "kwh": round(total_kwh, 2), "rates_as_of": RATES_AS_OF, "region": region, "region_name": REGION_NAMES.get(region or "", None),
+                "actual": actual, "results": ranked + [r for r in results if not r.get("replayable")],
                 "caveats": ["Replay of your consumption as it happened. A tariff with different cheap windows would change when PredHeat heats, so the optimised figure would be lower still.",
-                            "Unit rates are published prices for one region at the date shown; check your own region before switching.",
+                            f"Unit rates are indicative published prices at the date shown, not your region's exact prices{' (your tariff code says region ' + region + (', ' + REGION_NAMES[region] if region in REGION_NAMES else '') + ')' if region else ''}; check before switching.",
                             "Exit fees, eligibility (EV, smart meter) and export rates are not included."]}
 
     # ------------------------------------------------------------------ control
@@ -350,6 +399,10 @@ class Platform:
         reasonable confidence; until then the rule-based plan, and says which.
         """
         now = now or self.clock.now()
+        return self._cached(("plan", now.replace(minute=now.minute - now.minute % 5, second=0, microsecond=0)),
+                            lambda: self._shadow_plan(s, now))
+
+    def _shadow_plan(self, s, now: datetime) -> dict[str, Any]:
         start = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
         slots = self._price_slots(s, start, start + timedelta(hours=25))
         latest = repo.latest_measurements(s, self.property_id)
@@ -377,7 +430,8 @@ class Platform:
         if why_not:
             plan = build_shadow_plan(now, slots, dhw_tank_c=value(Signal.DHW_TANK_TEMPERATURE),
                                      dhw_setpoint_c=value(Signal.DHW_SETPOINT), outdoor_forecast=forecast)
-            plan["assumptions"].insert(0, f"Rule-based because {why_not}. The model-based optimiser takes over automatically.")
+            plan["assumptions"] = [f"Rule-based plan because the {why_not}. The learned house model takes over automatically once it is ready."] + [
+                a for a in plan["assumptions"] if not a.startswith("Rule-based")]
             plan["model"] = {"building": est["status"], "heat_pump": hp["status"]}
             return plan
         prop = s.get(m.Property, self.property_id)
@@ -407,8 +461,12 @@ class Platform:
 
     # ------------------------------------------------------------------ heat pump efficiency (COP model)
     def heat_pump_estimate(self, s, days: int = 30, now: datetime | None = None) -> dict[str, Any]:
-        """COP against outdoor temperature from hourly electricity and heat, plus observed capacity."""
         now = now or self.clock.now()
+        return self._cached(("heat_pump", days, now.replace(minute=now.minute - now.minute % 5, second=0, microsecond=0)),
+                            lambda: self._heat_pump_estimate(s, days, now))
+
+    def _heat_pump_estimate(self, s, days: int, now: datetime) -> dict[str, Any]:
+        """COP against outdoor temperature from hourly electricity and heat, plus observed capacity."""
         start = now - timedelta(days=days)
 
         def counter(sig: Signal):
@@ -471,7 +529,7 @@ class Platform:
                 .order_by(m.OptimisationRun.issued_at).all())
         runs = [r for r in runs if isinstance(r.slots, dict) and r.slots.get("predicted")]
         if not runs:
-            return {"status": "no_data", "reason": "No model-based plans recorded yet. Shadow mode records one every poll.", "runs": 0, "points": 0}
+            return {"status": "no_data", "reason": "Nothing to score yet. Plans are recorded in shadow mode and scored once their 24 hours have passed.", "runs": 0, "points": 0}
         earliest = min(as_utc(r.horizon_start) for r in runs)
         meas = [(as_utc(r.ts), r.value) for r in repo.measurements_for(s, self.property_id, Signal.INDOOR_TEMPERATURE.value, earliest, now) if r.value is not None]
         import bisect
@@ -504,7 +562,7 @@ class Platform:
                                "rmse_baseline_c": round(math.sqrt(sum(x * x for x in rb) / len(rb)), 2),
                                "bias_baseline_c": round(sum(rb) / len(rb), 2)})
         if not eb:
-            return {"status": "waiting", "reason": "Plans recorded but their horizons have not elapsed yet.", "runs": len(runs), "points": 0}
+            return {"status": "waiting", "reason": f"{len(runs)} plans recorded; the first will be scored once its 24 hours have passed.", "runs": len(runs), "points": 0}
         rmse_b = math.sqrt(sum(x * x for x in eb) / len(eb))
         return {"status": "ok", "runs": len(by_run), "points": len(eb),
                 "rmse_baseline_c": round(rmse_b, 2), "mae_baseline_c": round(sum(abs(x) for x in eb) / len(eb), 2),
@@ -712,9 +770,12 @@ class Platform:
             for cap in (self.capability_report.capabilities if self.capability_report else []):
                 r = latest.get(cap.signal.value)
                 age = (now - as_utc(r.ts)).total_seconds() / 60 if r else None
+                notes = cap.notes
+                if cap.status != "available" and r is not None:
+                    notes = (notes + "; " if notes else "") + "value shown is from an earlier mapping, not updated"
                 signals.append({"signal": cap.signal.value, "status": cap.status, "quality": cap.quality.value, "source": cap.source_ref,
                                 "confidence": cap.confidence, "last_value": (r.value if r else None), "last_text": (r.text if r else None),
-                                "age_minutes": round(age, 1) if age is not None else None, "stale": (age is not None and age > 120), "notes": cap.notes})
+                                "age_minutes": round(age, 1) if age is not None else None, "stale": (age is not None and age > 120), "notes": notes})
             events = [{"ts": as_utc(e.ts).isoformat(), "severity": e.severity, "source": e.source, "message": e.message}
                       for e in s.query(m.DataQualityEvent).filter_by(property_id=self.property_id).order_by(m.DataQualityEvent.ts.desc()).limit(25).all()]
             counts = {"measurements": s.query(m.SensorMeasurement).filter_by(property_id=self.property_id).count(),
@@ -746,8 +807,16 @@ class _RealClock:
         return now_utc()
 
 
-def build_platform(settings: Settings | None = None) -> Platform:
+def build_platform(settings: Settings | None = None, options_file: Path | None = None) -> Platform:
     settings = settings or get_settings()
+    from .settings_store import SettingsStore
+
+    store = SettingsStore.load(settings.data_dir, options_file)
+    if store.path.is_file() or options_file is not None:
+        store.apply(settings)  # a saved choice wins over the process defaults
+    else:
+        store.values.update({"operating_mode": settings.operating_mode.value, "gas_price_p_per_kwh": settings.gas_price_p_per_kwh,
+                             "boiler_efficiency": settings.boiler_efficiency, "control_max_offset_c": settings.control_max_offset_c})
     if settings.data_mode == DataMode.SIMULATED:
         from ..integrations.simulated import SimConfig, SimulatedHome, SimulatedSolarProvider, SimulatedTariffProvider, SimulatedTelemetryProvider, SimulatedWeatherProvider
         from ..integrations.simulated.providers import SimClock
@@ -763,6 +832,7 @@ def build_platform(settings: Settings | None = None) -> Platform:
             from ..integrations.homeassistant.control import RecordingControlAdapter
 
             p.controller = Controller(settings, RecordingControlAdapter(initial=cfg.setpoint_c), property_id=0)
+        p.settings_store = store
         return p
     from ..integrations.homeassistant.client import HAClient
     from ..integrations.homeassistant.providers import HAOctopusTariffProvider, HASolcastProvider, HATelemetryProvider, HAWeatherProvider
@@ -774,6 +844,7 @@ def build_platform(settings: Settings | None = None) -> Platform:
         from ..integrations.homeassistant.control import HAControlAdapter
 
         p.controller = Controller(settings, HAControlAdapter(client), property_id=0)
-        log.warning("Active control is ENABLED on %s (mode %s, max offset %.1f degC)", settings.control_climate_entity,
-                    settings.operating_mode.value, settings.control_max_offset_c)
+        log.warning("Control is possible on %s (mode %s, max offset %.1f degC); it acts only in balanced or max_savings mode",
+                    settings.control_climate_entity, settings.operating_mode.value, settings.control_max_offset_c)
+    p.settings_store = store
     return p

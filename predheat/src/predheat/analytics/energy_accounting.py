@@ -1,8 +1,11 @@
 """Energy accounting: cumulative counters -> interval energy -> categories -> reconciliation.
 
 Rules
-- Counters are monotonic; a decrease is treated as a meter reset (or a Vaillant
-  day rollover) and the delta is taken from zero, flagged as such.
+- Counters are monotonic. A decrease to near zero (under half the previous
+  value) is a meter reset or a Vaillant day rollover and the delta is taken from
+  zero, flagged as such. Any other decrease is a glitch (an out-of-order or
+  stale reading) and contributes nothing, flagged as such. Never add a lifetime
+  register reading as if it were an interval.
 - Interval energy is attributed uniformly across the time between two readings,
   then re-bucketed into half-hour slots. Vaillant publishes hourly buckets so
   each hour is split 50/50 and labelled model_derived at half-hour resolution.
@@ -57,8 +60,12 @@ def counter_to_intervals(
         delta = v1 - v0
         notes = []
         if delta < 0:
-            delta = v1  # reset: assume the counter restarted at zero
-            notes.append("counter_reset")
+            if v1 < 0.5 * v0:
+                delta = v1  # reset: the counter restarted at (or near) zero
+                notes.append("counter_reset")
+            else:
+                delta = 0.0  # non-monotonic glitch: ignore rather than invent energy
+                notes.append("non_monotonic_ignored")
         if gap > max_gap:
             notes.append(f"gap_{int(gap.total_seconds() // 60)}min")
         # Spread uniformly across [t0, t1)

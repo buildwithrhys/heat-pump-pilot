@@ -20,7 +20,9 @@ export function EnergyFlow({ costs, title }: { costs: Costs; title: string }) {
   const imp = costs.whole_home_import.kwh;
   const gridToHp = Math.min(hpElec, imp);
   const onsite = Math.max(hpElec - imp, 0); // heat pump electricity not explained by import: solar or battery
-  const rest = Math.max(imp - hpElec, 0);
+  const restActual = Math.max(imp - hpElec, 0);
+  const restShown = restActual <= 3 * hpElec; // otherwise it flattens every other flow; shown as text instead
+  const rest = restShown ? restActual : 0;
   if (hpElec < 0.05) return <p className="muted">No heat pump energy recorded for this period yet.</p>;
 
   const ink = css("--ink"), ink2 = css("--ink-2");
@@ -89,7 +91,7 @@ export function EnergyFlow({ costs, title }: { costs: Costs; title: string }) {
         </Sankey>
       </ResponsiveContainer>
       <p className="muted" style={{ fontSize: "0.8rem", margin: "4px 0 0" }}>
-        Outside air is the heat the pump harvested for free (heat delivered minus electricity used). Solar / battery is heat pump electricity not matched by grid import.
+        Outside air is the heat the pump harvested for free (heat delivered minus electricity used). Solar / battery is heat pump electricity not matched by grid import.{!restShown && restActual > 0 ? ` The rest of the home used ${restActual.toLocaleString("en-GB", { maximumFractionDigits: 1 })} kWh from the grid, not drawn so the heat pump flows stay readable.` : ""}
       </p>
     </div>
   );

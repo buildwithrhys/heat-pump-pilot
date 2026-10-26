@@ -2,112 +2,27 @@ configuration:
   data_mode:
     name: Data source
     description: >-
-      Where PredHeat gets its readings. "home_assistant" reads live data from this Home Assistant
-      instance through the Supervisor (heat pump, tariff, weather and solar integrations are
-      discovered automatically; see the System health tab for what was found). "simulated" runs a
-      synthetic house with known physics and a made-up Intelligent Go style tariff, which is useful
-      for exploring the dashboard before any real data has been collected. Nothing you set here can
-      control equipment.
-  operating_mode:
-    name: Operating mode
-    description: >-
-      "monitor" records and prices your energy use, learns the house's heat loss and shows what
-      PredHeat would do, but keeps nothing beyond the readings. "shadow" does the same and also saves
-      every 24-hour plan it produces, so the advice can be scored against what actually happened.
-      "balanced" and "max_savings" allow PredHeat to act on the plan by moving your room setpoint up
-      or down by a small amount (balanced: up to the maximum offset below; max_savings: up to one and
-      a half times it, capped at 2 degrees). They only act when "Allow control" is also on and a
-      climate entity is named, and every cycle re-checks that the model is confident, the readings
-      are fresh and you have not changed the setpoint yourself.
-  control_enabled:
-    name: Allow control
-    description: >-
-      Off by default. Switch on only after PredHeat has run in shadow mode for at least a week, the
-      heat loss figure shows 50% confidence or more, and the forecast accuracy on the System health
-      tab is under about 0.5 degrees. When on, together with an operating mode of balanced or
-      max_savings and a climate entity below, PredHeat will change your room setpoint by small
-      offsets according to its plan. It hands the setpoint back if the data goes stale, if you change
-      the thermostat yourself (it then waits four hours), if the house falls below the comfort band,
-      or when the add-on stops. Every change is written to the control log.
-  control_climate_entity:
-    name: Climate entity to control
-    description: >-
-      The Home Assistant climate entity for the heating zone, for example
-      climate.house_zone_1_circuit_0_climate from myVAILLANT. Find it under Settings, Devices and
-      services, Entities. PredHeat only ever calls climate.set_temperature on this one entity. Leave
-      empty to keep control impossible.
-  control_max_offset_c:
-    name: Maximum setpoint offset (degrees)
-    description: >-
-      The most PredHeat may move the setpoint above or below your own setting. 1.0 is a sensible
-      start. Larger values save more on time-of-use tariffs but let the house drift further. Values
-      above 2.0 are not accepted.
+      "home_assistant" reads live data from this Home Assistant instance. "simulated" runs a synthetic
+      house so you can explore the dashboard without any hardware.
   poll_seconds:
     name: Collection interval (seconds)
     description: >-
-      How often PredHeat reads new values from Home Assistant, refreshes tariff prices and
-      forecasts, and updates the plan. 300 (five minutes) is a good default. Lower values give finer
-      detail but create more database rows; values above 900 may miss short heat pump cycles.
+      How often readings, prices and forecasts are refreshed. 300 is a good default.
   log_level:
     name: Log level
     description: >-
-      How much detail appears in the add-on's Log tab. "info" is normal. Use "debug" if something is
-      not working and you want to see every request to Home Assistant, then set it back, as debug
-      logs are large.
-  gas_price_p_per_kwh:
-    name: Gas unit price (pence per kWh)
+      Detail in the add-on's Log tab. Use "debug" only while diagnosing a problem.
+  control_enabled:
+    name: Allow control
     description: >-
-      Used only for the "same heat on gas" comparison on the Energy costs tab. Enter the gas unit
-      rate you would pay, including VAT. The default is the Great Britain price cap rate at the time
-      of release. The comparison is a modelled what-if and is labelled as such.
-  boiler_efficiency:
-    name: Gas boiler efficiency (0.5 to 1.0)
+      Lets PredHeat move your room setpoint when the dashboard's operating mode is Balanced or Max
+      savings. Switch on only after a week in Shadow mode with heat loss confidence of 50% or more; see
+      the Documentation tab.
+  control_climate_entity:
+    name: Climate entity to control
     description: >-
-      Seasonal efficiency of the gas boiler the comparison assumes. 0.85 is typical for a modern
-      condensing boiler in real use; older boilers are nearer 0.75.
-  latitude:
-    name: Latitude (optional)
-    description: >-
-      Decimal degrees, for example 51.48. Only needed if you want PredHeat to use a different
-      location from the one set in Home Assistant, for example for solar geometry. Leave empty to
-      use the Home Assistant home location.
-  longitude:
-    name: Longitude (optional)
-    description: >-
-      Decimal degrees, for example -3.18. Leave empty to use the Home Assistant home location.
-  octopus_api_key:
-    name: Octopus Energy API key (optional)
-    description: >-
-      Not needed today. PredHeat reads tariff prices and Intelligent Octopus dispatches from the
-      Home Assistant Octopus Energy integration. A direct API key is reserved for future phases that
-      will read your account without going through Home Assistant. Stored only in the add-on's own
-      configuration.
-  octopus_account:
-    name: Octopus Energy account number (optional)
-    description: >-
-      Your account number, in the form A-AAAA1111. Only used together with the API key above.
-  openweather_api_key:
-    name: OpenWeather API key (optional)
-    description: >-
-      Not needed today. Weather forecasts come from the Home Assistant OpenWeatherMap integration.
-      Reserved for future direct access.
-  solcast_api_key:
-    name: Solcast API key (optional)
-    description: >-
-      Not needed today. Solar forecasts come from the Home Assistant Solcast integration. Reserved
-      for future direct access.
-  sim_days:
-    name: Simulated history (days)
-    description: >-
-      Only used when the data source is "simulated". How many days of synthetic history to generate
-      on first start. More days give the heat loss estimate more to learn from.
-  sim_seed:
-    name: Simulation seed
-    description: >-
-      Only used when the data source is "simulated". Any whole number. The same seed always produces
-      the same synthetic weather and heating pattern, so results are repeatable.
+      The climate entity for your heating zone, for example climate.house_zone_1_circuit_0_climate.
+      Required for control; see the Documentation tab.
 network:
   8750/tcp: >-
-    Optional direct access to the PredHeat dashboard and API from your network, without going
-    through Home Assistant ingress. Leave disabled unless you need it; the sidebar panel works
-    without it.
+    Optional direct access to the dashboard and API without ingress. Leave disabled unless needed.

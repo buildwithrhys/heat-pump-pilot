@@ -44,7 +44,7 @@ In **shadow** mode each plan is saved. Once its horizon has passed, the model's 
 
 ## Letting PredHeat control the heating
 
-Control is off by default and needs three things set together on the Configuration page: **Allow control**, an operating mode of **balanced** or **max_savings**, and the **climate entity** for the heating zone. If any one is missing, nothing is ever written.
+Control is off by default and needs three things: **Allow control** and the **climate entity** for the heating zone on the add-on Configuration tab, and an operating mode of **Balanced** or **Max savings** on the dashboard's Settings tab. If any one is missing, nothing is ever written. The Configuration tab needs a Home Assistant admin and restarts the add-on, which is deliberate: it is the interlock. The mode is a runtime choice you can change at any time, and switching away from a controlling mode hands the setpoint back immediately.
 
 When all three are set, on every collection cycle PredHeat reads the current target temperature of the climate entity and, if the plan says to pre-heat or coast right now, moves it up or down by the configured offset (balanced: the offset; max_savings: one and a half times it, capped at 2 °C). Otherwise it leaves your own setpoint in place. It hands the setpoint back and logs why when:
 
@@ -56,21 +56,27 @@ When all three are set, on every collection cycle PredHeat reads the current tar
 
 Every proposal, change, failure and release is written to the control log, and the System health tab shows what it is holding right now. Suggested sequence: run in shadow for a week, check the heat loss confidence and forecast accuracy, then switch to balanced.
 
-## Options
+## Settings: where each one lives
 
-Every option has a description on the Configuration page. In brief:
+**Add-on Configuration tab** (install-time and safety; saving restarts the add-on):
 
 | Option | Default | Meaning |
 |---|---|---|
 | Data source | `home_assistant` | Live data from this instance, or `simulated` for a synthetic house to explore the dashboard. |
-| Operating mode | `monitor` | `monitor` records, prices and advises. `shadow` also saves each plan for scoring. `balanced` and `max_savings` allow control when the options below are also set. |
-| Allow control, climate entity, maximum offset | off, empty, 1.0 | The three settings that together permit PredHeat to move your setpoint. See "Letting PredHeat control the heating". |
-| Gas unit price, boiler efficiency | 6.24p, 0.85 | For the "same heat on gas" comparison. |
 | Collection interval | 300 s | How often readings, prices and forecasts are refreshed. |
 | Log level | `info` | Use `debug` only while diagnosing a problem. |
-| Latitude, longitude | from Home Assistant | Override the location used for solar geometry. |
-| Octopus, OpenWeather and Solcast keys | empty | Not needed today. Reserved for direct access in later releases. |
-| Simulated history, seed | 14 days, 42 | Only used with the simulated data source. |
+| Allow control | off | The safety interlock. See "Letting PredHeat control the heating". |
+| Climate entity to control | empty | The one entity PredHeat may write to. |
+
+**Settings tab in the dashboard** (apply immediately, no restart, stored in the add-on's data directory):
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Operating mode | Monitor | Monitor, Shadow, Balanced or Max savings. The controlling modes are greyed out until Allow control and a climate entity are set in the Configuration tab. |
+| Maximum setpoint offset | 1.0 °C | How far PredHeat may move your setpoint either way. |
+| Gas unit price, boiler efficiency | 6.24p, 0.85 | For the "same heat on gas" comparison. |
+
+The home location and time zone come from Home Assistant. Values you had set for the moved options in an earlier release are copied into the Settings tab once on the first start after upgrading.
 
 ## Safety
 

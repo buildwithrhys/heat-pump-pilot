@@ -1,4 +1,4 @@
-from .tariffs import DEFAULT_TEMPLATES, RATES_AS_OF, TariffTemplate, load_templates, replay
+from .tariffs import DEFAULT_TEMPLATES, RATES_AS_OF, REGION_NAMES, TariffTemplate, load_templates, replay
 from .tariff_engine import (
     RateBook,
     SlotPrice,
@@ -12,6 +12,7 @@ from .tariff_engine import (
 __all__ = [
     "DEFAULT_TEMPLATES",
     "RATES_AS_OF",
+    "REGION_NAMES",
     "TariffTemplate",
     "load_templates",
     "replay",

@@ -18,7 +18,12 @@ from typing import Any
 
 from ..timeutils import LONDON
 
-RATES_AS_OF = "October 2025, region C (London), indicative"
+RATES_AS_OF = "published October 2025, indicative national averages"
+
+# Octopus tariff code suffix -> grid supply area
+REGION_NAMES = {"A": "Eastern England", "B": "East Midlands", "C": "London", "D": "Merseyside and North Wales", "E": "West Midlands",
+                "F": "North East England", "G": "North West England", "H": "Southern England", "J": "South East England",
+                "K": "South Wales", "L": "South West England", "M": "Yorkshire", "N": "South Scotland", "P": "North Scotland"}
 
 
 @dataclass

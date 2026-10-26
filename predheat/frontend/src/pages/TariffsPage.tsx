@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, pounds, type TariffComparison } from "../api";
+import { api, num, pounds, type TariffComparison } from "../api";
 
 export default function TariffsPage() {
   const [days, setDays] = useState(30);
@@ -16,8 +16,11 @@ export default function TariffsPage() {
         <label>Replay <select value={days} onChange={(e) => setDays(+e.target.value)}>
           <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option><option value={365}>Last year</option>
         </select></label>
-        <span className="muted">{t.kwh?.toFixed(0)} kWh of {t.source === "whole_home_import" ? "whole-home import" : "heat pump electricity only"} · rates {t.rates_as_of}</span>
+        <span className="muted">{num(t.kwh, 0, " kWh")} of {t.source === "whole_home_import" ? "whole-home import" : "heat pump electricity only"} · rates {t.rates_as_of}{t.region ? ` · your region ${t.region}${t.region_name ? ` (${t.region_name})` : ""}` : ""}</span>
       </div>
+      {t.actual && !t.actual.prices_complete && (
+        <div className="note warn">Some half-hourly prices for this period are missing, so "What you paid" is understated and the comparison against it is unreliable. The replays on the right are unaffected.</div>
+      )}
       <div className="grid">
         {t.actual && (
           <div className="card">
@@ -30,13 +33,13 @@ export default function TariffsPage() {
           <div className={`card ${t.actual && t.actual.difference_vs_best_pence != null && t.actual.difference_vs_best_pence > 50 ? "info" : ""}`}>
             <h3>Cheapest replay</h3>
             <div className="big">{pounds(best.total_pence ?? 0)}</div>
-            <div className="sub">{best.name}{t.actual?.difference_vs_best_pence != null ? ` · ${t.actual.difference_vs_best_pence > 0 ? `${pounds(t.actual.difference_vs_best_pence)} less than you paid` : "you are already on the cheapest"}` : ""}</div>
+            <div className="sub">{best.name}{t.actual?.on_cheapest ? " · you are on this tariff" : t.actual?.difference_vs_best_pence != null && t.actual.prices_complete ? (t.actual.difference_vs_best_pence > 0 ? ` · ${pounds(t.actual.difference_vs_best_pence)} less than you paid` : " · what you paid was lower") : ""}</div>
           </div>
         )}
         {best && (
           <div className="card">
             <h3>Annualised</h3>
-            <div className="big">£{best.annualised_pounds?.toFixed(0)}</div>
+            <div className="big">{pounds((best.annualised_pounds ?? 0) * 100).replace(/\.00$/, "")}</div>
             <div className="sub">{best.name}, scaled from {t.days} days · indicative</div>
           </div>
         )}

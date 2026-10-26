@@ -171,3 +171,36 @@ def rates_for(session: Session, tariff_code: str, start: datetime, end: datetime
 def log_quality_event(session: Session, property_id: int, severity: str, source: str, message: str, signal: str | None = None, **details) -> None:
     session.add(m.DataQualityEvent(property_id=property_id, ts=datetime.now(tz=timezone.utc), severity=severity,
                                    source=source, signal=signal, message=message, details=details))
+
+
+def purge_misstamped_history(session: Session, property_id: int) -> int:
+    """Remove cumulative-counter rows stamped exactly on the hour by releases before 0.2.1.
+
+    Those rows came from hourly statistics stamped at the hour's start while
+    holding the end-of-hour value. Live readings are stamped with the entity's
+    last_updated time, which is practically never exactly hh:00:00.000000, so
+    the heuristic is safe. Runs once per property (marker in ``Property.extra``).
+    """
+    from ..domain.signals import SIGNAL_CATALOGUE, SignalKind
+
+    prop = session.get(m.Property, property_id)
+    extra = dict(prop.extra or {})
+    done = set(extra.get("migrations", []))
+    if "lts_timestamps_v1" in done:
+        return 0
+    cumulative = [s.value for s, spec in SIGNAL_CATALOGUE.items() if spec.kind == SignalKind.CUMULATIVE]
+    rows = session.scalars(
+        select(m.SensorMeasurement).where(m.SensorMeasurement.property_id == property_id,
+                                          m.SensorMeasurement.signal.in_(cumulative),
+                                          m.SensorMeasurement.provenance != "simulated")
+    ).all()
+    n = 0
+    for r in rows:
+        t = as_utc(r.ts)
+        if t.minute == 0 and t.second == 0 and t.microsecond == 0:
+            session.delete(r)
+            n += 1
+    extra["migrations"] = sorted(done | {"lts_timestamps_v1"})
+    prop.extra = extra
+    session.flush()
+    return n

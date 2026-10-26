@@ -116,20 +116,35 @@ class HATelemetryProvider:
         return out
 
     async def read_history(self, start: datetime, end: datetime) -> list[Measurement]:
-        """Hourly long-term statistics for cumulative counters and means for instants."""
+        """Hourly long-term statistics: counters and means.
+
+        A statistics row's ``state`` is the counter's last value *within* the hour,
+        so it is stamped at the end of the hour. Stamping it at the start made the
+        counter look as if it ran backwards whenever live readings were interleaved,
+        which the accounting then mistook for a meter reset. Means are stamped at
+        the middle of the hour.
+        """
         ids = [m.entity_id for m in self.mapping]
         stats = await self.client.statistics(ids, start, end, period="hour")
         by_id = {m.entity_id: m for m in self.mapping}
+        now = datetime.now(tz=timezone.utc)
         out: list[Measurement] = []
+
+        def _ts(v) -> datetime:
+            return datetime.fromtimestamp(v / 1000, tz=timezone.utc) if isinstance(v, (int, float)) else datetime.fromisoformat(v)
+
         for eid, rows in stats.items():
             m = by_id[eid]
             spec = SIGNAL_CATALOGUE[m.signal]
             for row in rows:
-                ts = datetime.fromtimestamp(row["start"] / 1000, tz=timezone.utc) if isinstance(row["start"], (int, float)) else datetime.fromisoformat(row["start"])
+                t0 = _ts(row["start"])
+                t1 = _ts(row["end"]) if row.get("end") is not None else t0 + timedelta(hours=1)
                 if spec.kind.value == "cumulative":
                     val = row.get("state")
+                    ts = min(t1, now)
                 else:
                     val = row.get("mean")
+                    ts = t0 + (t1 - t0) / 2
                 if val is None:
                     continue
                 out.append(Measurement(signal=m.signal, ts=ts, value=float(val) * m.unit_scale,

@@ -3,6 +3,10 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { api, num, pounds, type Costs, type DailyRow } from "../api";
 import { EnergyFlow } from "./flow";
 
+/** A day with no readings at all shows dashes rather than zeros. */
+const hasData = (d: DailyRow) => d.space_heating.kwh_electric > 0 || d.hot_water.kwh_electric > 0 || (d.space_heating.kwh_heat ?? 0) > 0 || d.whole_home_import.kwh > 0;
+const dash = (v: number | null | undefined, fmt: (v: number) => string, ok: boolean) => (ok && v != null ? fmt(v) : "–");
+
 /** "Wed 8 Oct" from an ISO date, UK style. */
 const ukDate = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 
@@ -17,7 +21,7 @@ export default function CostsPage() {
   if (!data) return <p className="muted">Loading…</p>;
   const s = data.summary;
   const rows = data.daily.map((d) => ({
-    date: d.date.slice(5),
+    date: ukDate(d.date),
     heating: +(d.space_heating.cost_pence / 100).toFixed(2),
     hotwater: +(d.hot_water.cost_pence / 100).toFixed(2),
     heatkwh: d.space_heating.kwh_heat ?? 0,
@@ -31,7 +35,7 @@ export default function CostsPage() {
         <label>Period <select value={days} onChange={(e) => setDays(+e.target.value)}>
           <option value={7}>Last 7 days</option><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option>
         </select></label>
-        <span className="muted">{s.tariff_code}</span>
+        <span className="muted">Tariff {s.tariff_code ?? "unknown"}</span>
       </div>
       <div className="grid">
         <div className="card"><h3>Space heating<span className={`tag ${s.space_heating.quality}`}>{s.space_heating.quality}</span></h3><div className="big">{pounds(s.space_heating.cost_pence)}</div><div className="sub">{num(s.space_heating.kwh_electric, 1, " kWh elec")} → {num(s.space_heating.kwh_heat, 1, " kWh heat")} · COP {num(s.space_heating.cop, 2)}</div></div>
@@ -67,14 +71,14 @@ export default function CostsPage() {
           <tbody>
             {data.daily.map((d) => (
               <tr key={d.date}>
-                <td style={{ whiteSpace: "nowrap" }}>{ukDate(d.date)}</td>
-                <td className="num">{num(d.space_heating.kwh_electric, 1)}</td>
-                <td className="num">{num(d.space_heating.kwh_heat, 1)}</td>
+                <td style={{ whiteSpace: "nowrap" }}>{ukDate(d.date)}{d.space_heating.prices_complete === false && (d.space_heating.kwh_electric > 0) ? <span className="tag bad">prices missing</span> : null}</td>
+                <td className="num">{dash(d.space_heating.kwh_electric, (v) => num(v, 1), hasData(d))}</td>
+                <td className="num">{dash(d.space_heating.kwh_heat, (v) => num(v, 1), hasData(d))}</td>
                 <td className="num">{num(d.space_heating.cop, 2)}</td>
-                <td className="num">{pounds(d.space_heating.cost_pence)}</td>
-                <td className="num">{pounds(d.hot_water.cost_pence)}</td>
-                <td className="num">{pounds(d.heat_pump_total.cost_pence)}</td>
-                <td className="num">{pounds(d.whole_home_import.cost_pence)}</td>
+                <td className="num">{dash(d.space_heating.cost_pence, pounds, hasData(d) && d.space_heating.prices_complete !== false)}</td>
+                <td className="num">{dash(d.hot_water.cost_pence, pounds, hasData(d) && d.hot_water.prices_complete !== false)}</td>
+                <td className="num">{dash(d.heat_pump_total.cost_pence, pounds, hasData(d) && d.space_heating.prices_complete !== false)}</td>
+                <td className="num">{dash(d.whole_home_import.cost_pence, pounds, hasData(d) && d.whole_home_import.kwh > 0)}</td>
               </tr>
             ))}
           </tbody>

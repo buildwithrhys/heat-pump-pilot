@@ -5,8 +5,9 @@ import CostsPage from "./pages/CostsPage";
 import ForecastPage from "./pages/ForecastPage";
 import SystemPage from "./pages/SystemPage";
 import TariffsPage from "./pages/TariffsPage";
+import SettingsPage from "./pages/SettingsPage";
 
-const TABS = ["Overview", "Energy costs", "Forecast", "Tariffs", "System health"] as const;
+const TABS = ["Overview", "Energy costs", "Forecast", "Tariffs", "System health", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function App() {
@@ -37,6 +38,7 @@ export default function App() {
       {tab === "Forecast" && <ForecastPage />}
       {tab === "Tariffs" && <TariffsPage />}
       {tab === "System health" && <SystemPage />}
+      {tab === "Settings" && <SettingsPage />}
     </div>
   );
 }
