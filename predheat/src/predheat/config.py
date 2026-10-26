@@ -47,6 +47,9 @@ class Settings(BaseSettings):
 
     # Home Assistant
     ha_url: str = "http://homeassistant.local:8123"
+    # Websocket endpoint. Defaults to <ha_url>/api/websocket; the add-on sets it to the
+    # Supervisor proxy (ws://supervisor/core/websocket) which lives on a different path.
+    ha_ws_url: str | None = None
     ha_token: SecretStr | None = None
     ha_poll_seconds: int = 300
 
@@ -64,10 +67,13 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = 8750
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    log_level: str = "INFO"
 
-    @property
-    def data_dir(self) -> Path:
-        return Path("./data")
+    # Where the database and discovery reports live. The add-on points this at /data,
+    # the Supervisor's persistent storage for the add-on.
+    data_dir: Path = Path("./data")
+    # Built dashboard (Vite output). When set and present, the API serves it at "/".
+    frontend_dir: Path | None = None
 
 
 @lru_cache

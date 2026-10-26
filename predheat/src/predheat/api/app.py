@@ -14,7 +14,7 @@ from datetime import date, timedelta
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from .. import __version__
 from ..config import Settings, get_settings
@@ -113,7 +113,30 @@ def create_app(settings: Settings | None = None, platform: Platform | None = Non
             raise HTTPException(404, "only available in simulated mode")
         return p.simulated_home.ground_truth()
 
+    _mount_dashboard(app, settings)
     return app
+
+
+def _mount_dashboard(app: FastAPI, settings: Settings) -> None:
+    """Serve the built Vite dashboard from ``settings.frontend_dir`` when it exists.
+
+    Registered after the API routes so ``/api/*`` always wins. Unknown paths fall
+    back to ``index.html`` so the single-page app works under Home Assistant
+    ingress, where the app is mounted below an opaque prefix.
+    """
+    root = settings.frontend_dir
+    if root is None or not (root / "index.html").is_file():
+        return
+    root = root.resolve()
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def dashboard(path: str):
+        if path.startswith("api/"):
+            raise HTTPException(404)
+        candidate = (root / path).resolve() if path else root / "index.html"
+        if candidate.is_file() and (candidate == root / "index.html" or root in candidate.parents):
+            return FileResponse(candidate)
+        return FileResponse(root / "index.html")
 
 
 app = create_app()

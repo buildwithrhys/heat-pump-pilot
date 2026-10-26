@@ -7,8 +7,9 @@ __pycache__/
 data/
 .env
 docs/discovery/latest.*
-frontend/node_modules/
-frontend/dist/
+**/node_modules/
+**/frontend/dist/
+predheat/static/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm

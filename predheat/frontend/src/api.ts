@@ -1,7 +1,15 @@
+// API calls are resolved relative to the page, not the site root, so the dashboard
+// works both at "/" and below the opaque prefix Home Assistant ingress mounts it on.
+// VITE_API_BASE overrides this for a split dev setup.
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
+function url(path: string): string {
+  if (BASE) return `${BASE.replace(/\/$/, "")}${path}`;
+  return new URL(path.replace(/^\//, ""), document.baseURI).toString();
+}
+
 async function get<T>(path: string): Promise<T> {
-  const r = await fetch(`${BASE}${path}`);
+  const r = await fetch(url(path));
   if (!r.ok) throw new Error(`${path}: ${r.status}`);
   return r.json() as Promise<T>;
 }

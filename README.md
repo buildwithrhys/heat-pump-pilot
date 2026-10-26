@@ -10,12 +10,27 @@ Pilot installation: Vaillant aroTHERM pro 7 kW (VRC720 controller, VR 940f gatew
 
 Phase 0 (technical discovery) is complete and Phase 1 (working data platform) is implemented as a skeleton: discovery, collection, storage, pricing engine, energy accounting, a simulated home, an API and a basic dashboard. Everything is read-only. There is no code path that writes to heating equipment. See `ROADMAP.md`, `SAFETY.md` and `docs/phase0-capability-report.md`.
 
-## Quick start (simulated data, no hardware needed)
+## Install as a Home Assistant add-on
+
+[![Add repository to my Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fbuildwithrhys%2Fpredheat)
+
+Click the badge, or add `https://github.com/buildwithrhys/predheat` under Settings, Add-ons, Add-on store, Repositories. Install PredHeat, start it, and open it from the sidebar. The add-on reads Home Assistant through the Supervisor, so no access token is needed. Options are documented in `predheat/DOCS.md`.
+
+The badge needs the repository to be public. Until then, install from a local folder: copy `predheat/` to `/addons/predheat` on the Home Assistant host and refresh the add-on store.
+
+## Repository layout
+
+- `repository.yaml` marks this as a Home Assistant add-on repository.
+- `predheat/` is the add-on: `config.yaml`, `Dockerfile`, `DOCS.md`, and inside it the Python package (`src/`), tests and the React dashboard (`frontend/`). The add-on folder is also the Docker build context, which is why the application lives there.
+- `docs/` and the top-level `*.md` files are the design documents.
+
+## Quick start outside Home Assistant (simulated data, no hardware needed)
 
 ```bash
+cd predheat
 uv venv .venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
-pytest                                  # 27 tests
+pytest                                  # 33 tests
 predheat bootstrap                      # creates data/predheat.sqlite, backfills 14 simulated days
 predheat serve                          # API on http://127.0.0.1:8750 (docs at /docs)
 cd frontend && npm install && npm run dev   # dashboard on http://localhost:5173
@@ -29,6 +44,8 @@ predheat discover            # writes docs/discovery/latest.json and .md from yo
 predheat bootstrap --backfill-days 30
 predheat serve
 ```
+
+Or with Docker, from the repository root: `docker compose up --build`, which builds the same image as the add-on and serves the dashboard on port 8750.
 
 `predheat discover` needs only a long-lived access token with read access. It does not call any service that changes equipment.
 

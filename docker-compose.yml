@@ -1,7 +1,7 @@
 services:
   predheat:
-    build: .
+    build: ./predheat
     env_file: .env
     ports: ["8750:8750"]
-    volumes: ["./data:/app/data"]
+    volumes: ["./data:/data"]
     restart: unless-stopped

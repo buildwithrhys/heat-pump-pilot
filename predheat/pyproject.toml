@@ -2,7 +2,7 @@
 name = "predheat"
 version = "0.1.0"
 description = "PredHeat: self-learning heat pump and home energy optimiser (Home Assistant proof of concept)"
-readme = "README.md"
+readme = "DOCS.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }
 authors = [{ name = "coLaunch Limited" }]
@@ -27,6 +27,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "mypy>=1.10"]
 
 [project.scripts]
 predheat = "predheat.cli:app"
+predheat-addon = "predheat.addon:main"
 
 [build-system]
 requires = ["hatchling"]

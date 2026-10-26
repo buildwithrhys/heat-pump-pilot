@@ -52,9 +52,12 @@ class HAState:
 
 
 class HAClient:
-    def __init__(self, url: str | None = None, token: str | None = None, timeout: float = 20.0):
+    def __init__(self, url: str | None = None, token: str | None = None, timeout: float = 20.0, ws_url: str | None = None):
         settings = get_settings()
         self.url = (url or settings.ha_url).rstrip("/")
+        self.ws_url = ws_url or settings.ha_ws_url or (
+            self.url.replace("http://", "ws://").replace("https://", "wss://") + "/api/websocket"
+        )
         self.token = token or (settings.ha_token.get_secret_value() if settings.ha_token else None)
         if not self.token:
             raise ValueError("Home Assistant token not configured (PREDHEAT_HA_TOKEN)")
@@ -106,8 +109,7 @@ class HAClient:
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("websockets package required") from exc
 
-        ws_url = self.url.replace("http://", "ws://").replace("https://", "wss://") + "/api/websocket"
-        async with websockets.connect(ws_url, max_size=50 * 1024 * 1024) as ws:
+        async with websockets.connect(self.ws_url, max_size=50 * 1024 * 1024) as ws:
             hello = json.loads(await ws.recv())
             if hello.get("type") != "auth_required":
                 raise RuntimeError(f"unexpected HA hello: {hello}")
