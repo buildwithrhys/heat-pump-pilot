@@ -2,18 +2,23 @@ import { useEffect, useState } from "react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type Timeline } from "../api";
 import { PlanList } from "./plan";
+import { GLOSSARY, Term } from "../glossary";
 
 const css = (v: string) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const hhmm = (iso: string) => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 const dayhh = (iso: string) => new Date(iso).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit" });
 
 const CLASS_LABEL: Record<string, string> = {
-  guaranteed_off_peak: "Guaranteed off-peak",
-  confirmed_dispatch: "Confirmed dispatch",
-  planned_dispatch: "Planned dispatch (assumed)",
-  peak: "Peak",
-  variable: "Variable",
-  unknown: "Unknown",
+  guaranteed_off_peak: "Cheap hours",
+  confirmed_dispatch: "Confirmed EV charging slot (cheap)",
+  planned_dispatch: "Planned EV charging slot (may move)",
+  peak: "Standard rate",
+  variable: "Half-hourly price",
+  unknown: "Price not known yet",
+};
+const CLASS_TIP: Record<string, string> = {
+  guaranteed_off_peak: GLOSSARY.guaranteed_off_peak, confirmed_dispatch: GLOSSARY.dispatch_confirmed, planned_dispatch: GLOSSARY.dispatch_planned,
+  peak: GLOSSARY.peak, variable: GLOSSARY.variable, unknown: "Octopus publishes tomorrow's prices around 16:00; until then the standard rate is assumed.",
 };
 
 export default function ForecastPage() {
@@ -44,8 +49,8 @@ export default function ForecastPage() {
         <div className="section chart">
           <h4>Predicted indoor temperature, next 24 hours (°C)</h4>
           <div className="legend">
-            <span style={{ "--c": css("--primary") } as React.CSSProperties}>PredHeat plan</span>
-            <span style={{ "--c": css("--axis") } as React.CSSProperties}>Plain thermostat</span>
+            <span style={{ "--c": css("--primary") } as React.CSSProperties}>With PredHeat's plan</span>
+            <span title={GLOSSARY.plain_thermostat} style={{ "--c": css("--axis") } as React.CSSProperties}>With an ordinary thermostat<Term k="plain_thermostat" /></span>
           </div>
           <ResponsiveContainer width="100%" height={200}>
             <LineChart data={t.optimisation.predicted.map((p) => ({ x: p.start, label: dayhh(p.start), plan: p.t_in, base: p.t_in_baseline, heat: p.heat_kw }))} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -63,10 +68,10 @@ export default function ForecastPage() {
         The charts below are the inputs behind the plan: prices by certainty, weather and solar. Planned Intelligent Octopus dispatches are shown but never assumed to qualify until they start.
       </div>
       <div className="chart">
-        <h4>Import price, next 48 hours ({t.tariff_code})</h4>
+        <h4>Electricity price per kWh, next 48 hours<Term text={`Your tariff: ${t.tariff_code}. Prices include VAT.`} /></h4>
         <div className="legend">
           {Object.keys(CLASS_LABEL).filter((k) => (t.slot_summary[k] ?? 0) > 0).map((k) => (
-            <span key={k} style={{ "--c": colour[k] } as React.CSSProperties}>{CLASS_LABEL[k]} ({t.slot_summary[k]})</span>
+            <span key={k} title={CLASS_TIP[k]} style={{ "--c": colour[k] } as React.CSSProperties}>{CLASS_LABEL[k]} ({t.slot_summary[k]} half-hours)</span>
           ))}
         </div>
         <ResponsiveContainer width="100%" height={220}>
@@ -96,13 +101,13 @@ export default function ForecastPage() {
       </div>
 
       <div className="section chart">
-        <h4>Solar PV forecast (kW, p10 to p90 band)</h4>
+        <h4>Solar generation forecast (kW): expected, with the likely range shaded<Term k="solar_band" /></h4>
         <ResponsiveContainer width="100%" height={200}>
           <AreaChart data={pv} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
             <CartesianGrid vertical={false} stroke={grid} />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: ink2 }} tickFormatter={(v, i) => tickIf(pv)(i) ?? v} interval={0} axisLine={{ stroke: grid }} tickLine={false} />
             <YAxis tick={{ fontSize: 12, fill: ink2 }} axisLine={false} tickLine={false} width={34} />
-            <Tooltip formatter={(v, n) => [`${Number(v ?? 0).toFixed(2)} kW`, String(n) === "pv" ? "Expected" : String(n) === "hi" ? "p90" : "p10"]} labelFormatter={(_l, p) => (p?.[0] ? hhmm((p[0].payload as { x: string }).x) : "")} contentStyle={{ borderRadius: 8, fontSize: 13 }} />
+            <Tooltip formatter={(v, n) => [`${Number(v ?? 0).toFixed(2)} kW`, String(n) === "pv" ? "Expected" : String(n) === "hi" ? "High end of likely range" : "Low end of likely range"]} labelFormatter={(_l, p) => (p?.[0] ? hhmm((p[0].payload as { x: string }).x) : "")} contentStyle={{ borderRadius: 8, fontSize: 13 }} />
             <Area type="monotone" dataKey="hi" stroke="none" fill={css("--s7")} fillOpacity={0.15} />
             <Area type="monotone" dataKey="lo" stroke="none" fill={css("--surface")} fillOpacity={1} />
             <Area type="monotone" dataKey="pv" stroke={css("--s7")} strokeWidth={2} fill="none" />

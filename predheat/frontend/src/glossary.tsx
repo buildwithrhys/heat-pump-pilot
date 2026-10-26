@@ -1,0 +1,62 @@
+/** One source of plain-English explanations for every technical term in the dashboard. */
+export const GLOSSARY: Record<string, string> = {
+  cop: "COP (coefficient of performance): how many kWh of heat the heat pump delivers for each kWh of electricity it uses. 3 means three units of heat per unit of electricity. Higher is better; it falls as it gets colder outside.",
+  kwh: "kWh (kilowatt-hour): the unit your electricity bill counts. Running a 1 kW appliance for an hour uses 1 kWh.",
+  kw: "kW (kilowatt): a rate of energy, like speed. A 7 kW heat pump can deliver 7 kWh of heat per hour at full output.",
+  flow_temperature: "Flow temperature: the temperature of the water leaving the heat pump for the radiators or underfloor pipes. Lower flow temperatures are more efficient.",
+  hp_state: "The heat pump controller's own report of what it is doing right now, and the electrical power it is drawing.",
+  tariff_now: "The price per kWh you are paying for electricity right now on your Octopus tariff, including VAT.",
+  standing_charge: "The fixed daily charge on your electricity bill, paid whatever you use. Shown for the whole property and not included in the appliance costs.",
+  useful_heat_cost: "What each kWh of heat delivered into the house cost in electricity. Compare with gas at your Settings figures: gas at 6.24p and 85% efficiency is about 7.3p per kWh of heat.",
+  gas_comparison: "What a gas boiler would have cost to deliver the same heat, at the gas price and boiler efficiency on the Settings tab. A modelled what-if, not a bill.",
+  vaillant_estimate: "The heat pump's own energy counters, as reported by the Vaillant controller. Accurate to a few percent in practice, but not a billing meter, and the hourly figures arrive one to two hours late.",
+  metered: "From the electricity meter itself, the same data your bill is based on.",
+  modelled: "Estimated by PredHeat because no sensor reports it directly. Standby power is assumed at 15 W while the heat pump is idle.",
+  prices_incomplete: "Some half-hour prices for this period were not available when the costs were calculated, so the cost is understated.",
+  stale: "No successful read of this sensor for longer than expected. The value shown is the last one received.",
+  dispatch_confirmed: "An Intelligent Octopus charging slot that has started or finished. Electricity used in it is charged at the cheap rate.",
+  dispatch_planned: "A charging slot Octopus has planned but which may still move. PredHeat never assumes the cheap rate until the slot actually starts.",
+  guaranteed_off_peak: "The fixed cheap hours of your tariff (23:30 to 05:30 on Intelligent Octopus Go), always charged at the cheap rate.",
+  variable: "Half-hourly prices set the day before, as on Agile tariffs.",
+  peak: "The standard, dearer rate outside the cheap hours.",
+  plain_thermostat: "The same house model run with an ordinary on/off thermostat holding the setpoint, so the saving is like for like.",
+  solar_band: "The forecast's own uncertainty: the shaded band is the range it expects 80% of outcomes to fall within.",
+  shadow_plan: "In Shadow mode every 24-hour plan is saved. Once the day has passed the prediction is scored against what the sensors measured, which is how PredHeat earns the right to control.",
+  monitor_plan: "In Monitor mode the plan is shown for interest only; nothing acts on it and it is not saved.",
+  saving_vs: "Saving per kWh against the dearer period the action avoids.",
+  unaccounted: "The energy counters do not quite balance. Usually hourly figures arriving late; it corrects itself within a couple of hours.",
+  heat_loss: "Heat loss: how much heating power the house needs to hold 21 °C inside at the design outdoor temperature, the way an installer's heat loss survey quotes it. PredHeat learns it from how fast the house cools and how much heat it takes to hold temperature.",
+  w_per_k: "Watts per °C of inside/outside difference. Multiply by the temperature difference to get the heating power needed.",
+  cooling_rate: "How quickly the indoor temperature falls with the heating off, starting from 21 °C at 5 °C outside. Depends on heat loss and how much heat the building fabric stores.",
+  design_temperature: "The coldest outdoor temperature a heating system is sized for in your region, the way installers quote heat loss. Change it on the Settings tab.",
+  survey: "The heat loss figure from your installer's survey, entered on the Settings tab. Used as a starting point for the learned figure and shown beside it.",
+  time_constant: "Time constant: how many hours the house takes to lose about two thirds of its excess warmth with the heating off. Bigger means the house holds heat longer.",
+  thermal_capacity: "How much heat the building fabric stores per °C. A heavy stone house stores more than a timber frame.",
+  forecast_error: "Typical error (RMSE) between the predicted and measured indoor temperature over the scored plans. Under 0.5 °C is the target before control is trusted.",
+  bias: "Average signed error. Positive means the model predicts warmer than the sensor measures.",
+  replay: "Your actual half-hourly consumption priced on each tariff's rates, as if you had been on it. It does not change when you used energy, so a tariff with different cheap hours would do better still once PredHeat times the heating for it.",
+  annualised: "The period's cost scaled to a full year. Indicative only: heating use is seasonal.",
+  cheap_share: "The share of your electricity used during the tariff's cheap hours.",
+  signals: "A signal is one reading PredHeat needs, such as indoor temperature or heat delivered. Each is fed by one Home Assistant entity, chosen automatically or by you.",
+  quality_sensor: "Measured directly by a sensor.",
+  quality_metered: "From a meter, the same data a bill uses.",
+  quality_manufacturer_estimated: "Calculated by the appliance's own controller rather than measured by a meter; usually within a few percent.",
+  quality_model_derived: "Estimated by PredHeat from other readings.",
+  quality_forecast: "A forecast, not a measurement.",
+  quality_simulated: "Synthetic data from PredHeat's simulator.",
+  status_live: "The entity exists and is reporting.",
+  status_degraded: "The entity was found but is unavailable or unknown right now.",
+  status_unavailable: "No Home Assistant entity matched this signal. Choose one with Change if you have it.",
+  events: "Info is normal operation, warning means a gap or fallback, error means a data provider failed on that cycle.",
+  slope: "How much the efficiency changes for each 1 °C change in outdoor temperature.",
+  capacity_source: "The most heat the pump has been seen to deliver in a half hour, or the rated output from Settings when there is too little data.",
+};
+
+/** Small "i" with a browser tooltip drawn from the glossary. */
+export function Term({ k, text }: { k?: string; text?: string }) {
+  const tip = text ?? (k ? GLOSSARY[k] : "") ?? "";
+  if (!tip) return null;
+  return <span title={tip} aria-label={tip} style={{ cursor: "help", marginLeft: 6, color: "var(--tertiary)", fontSize: 11, border: "1px solid var(--border)", borderRadius: "50%", padding: "0 5px", verticalAlign: "middle" }}>i</span>;
+}
+
+export const tip = (k: string) => GLOSSARY[k] ?? "";

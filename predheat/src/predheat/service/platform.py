@@ -598,7 +598,7 @@ class Platform:
         if why_not:
             plan = build_shadow_plan(now, slots, dhw_tank_c=value(Signal.DHW_TANK_TEMPERATURE),
                                      dhw_setpoint_c=value(Signal.DHW_SETPOINT), outdoor_forecast=forecast)
-            plan["assumptions"] = [f"Rule-based plan because the {why_not}. The learned house model takes over automatically once it is ready."] + [
+            plan["assumptions"] = [f"Simple rule-based plan for now, because the {why_not}. The learned house model takes over on its own once it is ready."] + [
                 a for a in plan["assumptions"] if not a.startswith("Rule-based")]
             plan["model"] = {"building": est["status"], "heat_pump": hp["status"]}
             return plan

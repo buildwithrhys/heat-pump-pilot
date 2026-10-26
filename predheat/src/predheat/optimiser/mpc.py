@@ -255,10 +255,12 @@ def build_mpc_plan(inp: MPCInputs, now: datetime, model_notes: list[str] | None 
     actions.sort(key=lambda a: a.start)
     upcoming = next((a for a in actions if a.end > now), None)
     cost, base_cost = res["cost_p"], res["baseline_cost_p"]
+    tau_h = inp.capacity_kwh_per_k * 1000.0 / inp.ua_w_per_k if inp.ua_w_per_k else 0.0
     assumptions = [
-        f"Model-based plan: heat loss {inp.ua_w_per_k:.0f} W/K, capacity {inp.capacity_kwh_per_k:.1f} kWh/K, COP {inp.cop_fn(7.0):.1f} at 7 degC.",
-        f"Comfort band {res['comfort_band'][0]:.1f} to {res['comfort_band'][1]:.1f} degC around a {inp.setpoint_c:.1f} degC setpoint; the house ends no colder than the setpoint.",
-        "Baseline is a plain thermostat at the setpoint on the same model, so the saving is like for like.",
+        f"Based on your learned house (it loses about {inp.ua_w_per_k * 24 / 1000:.1f} kW at -3 °C outside and holds its heat for about {tau_h:.0f} hours) "
+        f"and a heat pump efficiency of about {inp.cop_fn(7.0):.1f} at 7 °C outside.",
+        f"Keeps the house between {res['comfort_band'][0]:.1f} and {res['comfort_band'][1]:.1f} °C around your {inp.setpoint_c:.1f} °C setpoint, and no colder than the setpoint at the end of the day.",
+        "The comparison is the same house with an ordinary on/off thermostat, so the saving is like for like.",
     ] + list(model_notes or [])
     predicted = [{"start": s["start"].isoformat(), "t_in": s["t_in"], "t_in_baseline": s["t_in_baseline"], "heat_kw": s["heat_kw"],
                   "heat_kw_baseline": s["heat_kw_baseline"], "rate_p": s["rate_p"], "t_out": s["t_out"], "cost_p": s["cost_p"], "mode": modes[k]}

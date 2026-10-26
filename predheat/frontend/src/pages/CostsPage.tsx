@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, goToTab, num, pounds, type Costs, type DailyRow } from "../api";
+import { Term, tip } from "../glossary";
 import { EnergyFlow } from "./flow";
 
 /** A day with no readings at all shows dashes rather than zeros. */
@@ -70,18 +71,18 @@ export default function CostsPage() {
         <a className="chip" href={api.costsCsvUrl({ ...q, group: effectiveGroup })} download style={{ display: "inline-flex", alignItems: "center", textDecoration: "none" }}>Download CSV</a>
         <span className="muted">Tariff {s.tariff_code ?? "unknown"}</span>
       </div>
-      <p className="sources-line">Heat pump figures are Vaillant's own estimates, not metered readings. Whole home import is {s.whole_home_import.source === "smart_meter_half_hourly" ? "half-hourly smart meter data" : "from the Octopus meter reading"}. <button type="button" className="linkish" onClick={() => goToTab("System health")}>Data quality by signal</button></p>
+      <p className="sources-line">Heat pump energy figures are Vaillant's own estimates, not metered readings, and arrive one to two hours late<Term k="vaillant_estimate" />. Whole home import is {s.whole_home_import.source === "smart_meter_half_hourly" ? "half-hourly smart meter data" : "from the Octopus meter reading"}<Term k="metered" />. <button type="button" className="linkish" onClick={() => goToTab("System health")}>Data quality by signal</button></p>
       <div className="grid">
-        <div className="card"><h3>Space heating</h3><div className="big">{pounds(s.space_heating.cost_pence)}</div><div className="sub">{num(s.space_heating.kwh_electric, 1, " kWh elec")} → {num(s.space_heating.kwh_heat, 1, " kWh heat")} · COP {num(s.space_heating.cop, 2)}</div></div>
-        <div className="card"><h3>Hot water</h3><div className="big">{pounds(s.hot_water.cost_pence)}</div><div className="sub">{num(s.hot_water.kwh_electric, 1, " kWh elec")} → {num(s.hot_water.kwh_heat, 1, " kWh heat")} · COP {num(s.hot_water.cop, 2)}</div></div>
-        <div className="card"><h3>Heat pump total</h3><div className="big">{pounds(s.heat_pump_total.cost_pence)}</div><div className="sub">{num(s.heat_pump_total.kwh_electric, 1, " kWh")} incl. backup heater {num(s.auxiliary.kwh_electric, 2)} and standby {num(s.standby.kwh_electric, 2)}<span className="tag">modelled standby</span></div></div>
-        <div className="card"><h3>Cost per kWh of heat</h3><div className="big">{s.space_heating.pence_per_kwh_heat != null ? `${s.space_heating.pence_per_kwh_heat.toFixed(1)}p` : "–"}</div><div className="sub">space heating; hot water {s.hot_water.pence_per_kwh_heat != null ? `${s.hot_water.pence_per_kwh_heat.toFixed(1)}p` : "–"}</div></div>
+        <div className="card"><h3>Space heating</h3><div className="big">{pounds(s.space_heating.cost_pence)}</div><div className="sub">{num(s.space_heating.kwh_electric, 1, " kWh")} of electricity became {num(s.space_heating.kwh_heat, 1, " kWh")} of heat · COP {num(s.space_heating.cop, 2)}<Term k="cop" /></div></div>
+        <div className="card"><h3>Hot water</h3><div className="big">{pounds(s.hot_water.cost_pence)}</div><div className="sub">{num(s.hot_water.kwh_electric, 1, " kWh")} of electricity became {num(s.hot_water.kwh_heat, 1, " kWh")} of heat · COP {num(s.hot_water.cop, 2)}<Term k="cop" /></div></div>
+        <div className="card"><h3>Heat pump total</h3><div className="big">{pounds(s.heat_pump_total.cost_pence)}</div><div className="sub">{num(s.heat_pump_total.kwh_electric, 1, " kWh")} including backup heater {num(s.auxiliary.kwh_electric, 2, " kWh")} and standby {num(s.standby.kwh_electric, 2, " kWh")}<span className="tag" title={tip("modelled")}>standby modelled</span></div></div>
+        <div className="card"><h3>Cost of heat<Term k="useful_heat_cost" /></h3><div className="big">{s.space_heating.pence_per_kwh_heat != null ? `${s.space_heating.pence_per_kwh_heat.toFixed(1)}p` : "–"}</div><div className="sub">per kWh of heat into the house, space heating; hot water {s.hot_water.pence_per_kwh_heat != null ? `${s.hot_water.pence_per_kwh_heat.toFixed(1)}p` : "–"}</div></div>
         {s.whole_home_import.plausible === false ? (
           <div className="card urgent"><h3>Whole home import</h3><div className="big" style={{ fontSize: "1.1rem" }}>Data looks wrong</div><div className="sub">{num(s.whole_home_import.kwh, 0, " kWh")} is above the {num(s.whole_home_import.limit_kwh, 0, " kWh")} bound for this period. <button type="button" className="linkish" onClick={() => goToTab("System health")}>See System health</button></div></div>
         ) : (
           <div className="card"><h3>Whole home import</h3><div className="big">{pounds(s.whole_home_import.cost_pence)}</div><div className="sub">{num(s.whole_home_import.kwh, 1, " kWh")} metered + standing {pounds(s.standing_charge_pence)}</div></div>
         )}
-        <div className={`card ${s.gas_equivalent.saving_pence >= 0 ? "info" : "warn"}`}><h3>Same heat on gas</h3><div className="big">{pounds(s.gas_equivalent.cost_pence)}</div><div className="sub">{s.gas_equivalent.saving_pence >= 0 ? `heat pump ${pounds(s.gas_equivalent.saving_pence)} cheaper` : `heat pump ${pounds(-s.gas_equivalent.saving_pence)} dearer`} · {num(s.gas_equivalent.kwh_gas, 0, " kWh")} of gas at {s.gas_equivalent.price_p_per_kwh}p, {Math.round(s.gas_equivalent.boiler_efficiency * 100)}% boiler</div></div>
+        <div className={`card ${s.gas_equivalent.saving_pence >= 0 ? "info" : "warn"}`}><h3>Same heat on gas<Term k="gas_comparison" /></h3><div className="big">{pounds(s.gas_equivalent.cost_pence)}</div><div className="sub">{s.gas_equivalent.saving_pence >= 0 ? `heat pump ${pounds(s.gas_equivalent.saving_pence)} cheaper` : `heat pump ${pounds(-s.gas_equivalent.saving_pence)} dearer`} · {num(s.gas_equivalent.kwh_gas, 0, " kWh")} of gas at {s.gas_equivalent.price_p_per_kwh}p, {Math.round(s.gas_equivalent.boiler_efficiency * 100)}% boiler</div></div>
       </div>
 
       <div className="section">
@@ -105,7 +106,7 @@ export default function CostsPage() {
 
       <div className="section tablewrap">
         <table>
-          <thead><tr><th>Day</th><th className="num">Heating kWh</th><th className="num">Heat kWh</th><th className="num">COP</th><th className="num">Heating £</th><th className="num">Hot water £</th><th className="num">HP total £</th><th className="num">Home import £</th></tr></thead>
+          <thead><tr><th>Period</th><th className="num">Electricity used (kWh)<Term k="kwh" /></th><th className="num">Heat delivered (kWh)</th><th className="num">COP<Term k="cop" /></th><th className="num">Heating £</th><th className="num">Hot water £</th><th className="num">Heat pump total £</th><th className="num">Home import £<Term k="metered" /></th></tr></thead>
           <tbody>
             {data.daily.map((d) => (
               <tr key={d.date}>

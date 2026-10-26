@@ -1,5 +1,6 @@
 import { ResponsiveContainer, Sankey, Tooltip } from "recharts";
 import type { Costs } from "../api";
+import { GLOSSARY } from "../glossary";
 
 const css = (v: string) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const kwh = (v: number, dp = 1) => v.toLocaleString("en-GB", { minimumFractionDigits: dp, maximumFractionDigits: dp });
@@ -60,10 +61,12 @@ export function EnergyFlow({ costs, title, days = 1 }: { costs: Costs; title: st
   const Node = (props: any) => {
     const { x, y, width, height, index, payload } = props as { x: number; y: number; width: number; height: number; index: number; payload: { name: string; colour: string } };
     const n = nodes[index];
+    const nodeTip = payload.name === "Unaccounted" ? GLOSSARY.unaccounted : payload.name === "Free heat from outside air" ? "Heat delivered minus electricity used: the heat the pump moved in from the outside air for free." : undefined;
     const right = n.side === "out" && index !== hub;
     const isHub = index === hub;
     return (
       <g>
+        {nodeTip ? <title>{nodeTip}</title> : null}
         <rect x={x} y={y} width={width} height={Math.max(height, 1)} fill={payload.colour} rx={2} />
         <text x={isHub ? x + width / 2 : right ? x - 6 : x + width + 6} y={isHub ? y - 6 : y + height / 2} textAnchor={isHub ? "middle" : right ? "end" : "start"} dominantBaseline={isHub ? "auto" : "middle"} fontSize={12} fill={ink}>
           {payload.name}
@@ -93,7 +96,7 @@ export function EnergyFlow({ costs, title, days = 1 }: { costs: Costs; title: st
         {imp > 0 && costs.whole_home_import.plausible !== false ? ` The heat pump used ${kwh(hpElec)} kWh of the home's ${kwh(imp)} kWh of electricity${days === 1 ? " today" : ` over ${days} days`}.` : imp > 0 ? " Whole-home import is not shown because its data looks wrong; see System health." : ""}
       </p>
       <p className="muted" style={{ fontSize: 12, margin: "2px 8px 4px" }}>
-        Free heat from outside air is heat delivered minus electricity used. Heat pump energy figures are manufacturer estimates from the controller, not independent meter readings.
+        Free heat from outside air is heat delivered minus electricity used. Heat pump energy figures are Vaillant's own estimates, accurate to a few percent but not a billing meter.
       </p>
     </div>
   );

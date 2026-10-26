@@ -31,7 +31,7 @@ export default function App() {
         <h1>PredHeat</h1>
         {meta && (
           <span className="mode">
-            {meta.data_mode === "simulated" ? "Simulated data" : "Live data"} · {MODE_LABEL[meta.operating_mode] ?? meta.operating_mode} · {meta.control_enabled ? "control active" : "read-only"}
+            {meta.data_mode === "simulated" ? "Simulated data" : "Live data"} · {MODE_LABEL[meta.operating_mode] ?? meta.operating_mode} · {meta.control_enabled ? "controlling the heating" : "not controlling the heating"}
           </span>
         )}
       </header>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, num, pounds, type TariffComparison } from "../api";
+import { Term } from "../glossary";
 
 export default function TariffsPage() {
   const [days, setDays] = useState(30);
@@ -25,21 +26,21 @@ export default function TariffsPage() {
       <div className="grid">
         {t.actual && (
           <div className="card">
-            <h3>What you paid</h3>
+            <h3>What you paid<Term text="Your actual half-hourly consumption priced at the rates you were on at the time, plus standing charges." /></h3>
             <div className="big">{pounds(t.actual.total_pence)}</div>
             <div className="sub">{t.actual.code} · {t.actual.effective_p_per_kwh.toFixed(1)}p per kWh effective{t.actual.prices_complete ? "" : " · some prices missing"}</div>
           </div>
         )}
         {best && (
           <div className={`card ${t.actual && t.actual.difference_vs_best_pence != null && t.actual.difference_vs_best_pence > 50 ? "info" : ""}`}>
-            <h3>Cheapest replay</h3>
+            <h3>Cheapest for your usage<Term k="replay" /></h3>
             <div className="big">{pounds(best.total_pence ?? 0)}</div>
             <div className="sub">{best.name}{t.actual?.on_cheapest ? " · you are on this tariff" : t.actual?.difference_vs_best_pence != null && t.actual.prices_complete ? (t.actual.difference_vs_best_pence > 0 ? ` · ${pounds(t.actual.difference_vs_best_pence)} less than you paid` : " · what you paid was lower") : ""}</div>
           </div>
         )}
         {best && (
           <div className="card">
-            <h3>Annualised</h3>
+            <h3>A year at this rate<Term k="annualised" /></h3>
             <div className="big">{pounds((best.annualised_pounds ?? 0) * 100).replace(/\.00$/, "")}</div>
             <div className="sub">{best.name}, scaled from {t.days} days · indicative</div>
           </div>
@@ -49,7 +50,7 @@ export default function TariffsPage() {
         <h2>Ranked by total cost for the period</h2>
         <div className="tablewrap">
           <table>
-            <thead><tr><th>Tariff</th><th className="num">Units</th><th className="num">Standing</th><th className="num">Total</th><th className="num">p/kWh</th><th className="num">Cheap share</th><th>Notes</th></tr></thead>
+            <thead><tr><th>Tariff</th><th className="num">Unit charges</th><th className="num">Standing charges<Term k="standing_charge" /></th><th className="num">Total</th><th className="num">Average p/kWh</th><th className="num">Used in cheap hours<Term k="cheap_share" /></th><th>Notes</th></tr></thead>
             <tbody>
               {t.results.map((r) => (
                 <tr key={r.code}>
@@ -63,7 +64,7 @@ export default function TariffsPage() {
                       <td className="num">{r.cheap_share != null ? `${Math.round(r.cheap_share * 100)}%` : "–"}</td>
                     </>
                   ) : (
-                    <td colSpan={5} className="muted">Not replayable yet</td>
+                    <td colSpan={5} className="muted">Needs Octopus API data, coming in a later release</td>
                   )}
                   <td className="muted" style={{ fontSize: 12 }}>{r.requires && r.requires.length > 0 ? `Needs ${r.requires.join(", ").replace("_", " ")}. ` : ""}{r.note}</td>
                 </tr>

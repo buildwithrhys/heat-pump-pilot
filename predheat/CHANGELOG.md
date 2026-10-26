@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4
+
+- Every tab passed against the "no unanswered questions" rule: each number carries its unit and period in plain words, technical units are translated with the technical form in a tooltip, badges say why they are there, unknown states say what they are waiting for, and every technical term has a tooltip drawn from one glossary. The list of what changed and why is in `docs/ui-audit-2026-10-26.md`; the rule itself is in `CLAUDE.md` and governs future UI work.
+- Forecast legend speaks plainly (cheap hours, confirmed EV charging slot, planned slot that may move, standard rate); planner notes describe your house in kW and hours rather than W/K.
+- System health: status pills read live / found, not updating / not found; data quality reads measured, metered, appliance estimate, PredHeat estimate, forecast.
+
 ## 0.2.3
 
 - Fixed: whole-home import still showed a cumulative artefact (25,680 kWh in a day). Two root causes, both now guarded so they cannot regress. First, hourly rows from Home Assistant's long-term statistics can sit on a different baseline from the live sensor; they were stored under the same source and differenced against live readings, so the baseline gap became "consumption". Statistics rows now carry their own source tag, each source is differenced on its own and slots are merged with live readings preferred, and existing rows are re-tagged once on start. Second, there was no bound on how fast a counter may rise; any rise above 25 kWh per hour is now a discontinuity that contributes nothing. A domestic import above 150 kWh a day or 1,000 kWh a week is shown as "Data looks wrong, see System health" on the Overview, the daily table, the energy flow and the Tariffs tab instead of a number. A new `/api/samples?signal=` endpoint shows exactly what the accounting sees.

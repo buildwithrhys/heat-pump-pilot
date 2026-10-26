@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
 import { api, num, type HeatLoss, type HeatPump, type MappingSignal, type MappingView, type SystemHealth } from "../api";
+import { GLOSSARY, Term } from "../glossary";
+
+const QUALITY_LABEL: Record<string, [string, string]> = {
+  sensor: ["measured", GLOSSARY.quality_sensor], metered: ["metered", GLOSSARY.quality_metered], manufacturer_estimated: ["appliance estimate", GLOSSARY.quality_manufacturer_estimated],
+  model_derived: ["PredHeat estimate", GLOSSARY.quality_model_derived], forecast: ["forecast", GLOSSARY.quality_forecast], simulated: ["simulated", GLOSSARY.quality_simulated], unavailable: ["none", GLOSSARY.status_unavailable],
+};
+const STATUS_LABEL: Record<string, [string, string]> = { available: ["live", GLOSSARY.status_live], degraded: ["found, not updating", GLOSSARY.status_degraded], unavailable: ["not found", GLOSSARY.status_unavailable] };
 
 function LearnedModels() {
   const [hl, setHl] = useState<HeatLoss | null>(null);
@@ -9,22 +16,22 @@ function LearnedModels() {
   return (
     <div className="tablewrap">
       <table>
-        <thead><tr><th>Model</th><th>Status</th><th>Value</th><th>Detail</th></tr></thead>
+        <thead><tr><th>Model</th><th>Status</th><th>Value</th><th>Detail (technical)</th></tr></thead>
         <tbody>
           <tr>
-            <td>Building (1R1C)</td>
+            <td>House model<Term k="heat_loss" /></td>
             <td><span className={`tag ${hl.status === "ok" ? "measured" : ""}`}>{hl.status === "ok" ? "learned" : "waiting"}</span></td>
-            <td className="num">{hl.status === "ok" ? `${num(hl.heat_loss_w_per_k, 0)} W/°C` : "–"}</td>
-            <td className="muted">{hl.status === "ok" ? `watts per °C of inside/outside difference, range ${num(hl.ci_low_w_per_k, 0)} to ${num(hl.ci_high_w_per_k, 0)} · confidence ${Math.round((hl.confidence ?? 0) * 100)}% · capacity ${hl.capacity_kwh_per_k != null ? `${hl.capacity_kwh_per_k} kWh/°C` : "not learned"} · time constant ${hl.time_constant_h != null ? `${hl.time_constant_h} h` : "not learned"} · design ${hl.design_outdoor_c} °C (${hl.design_region})${hl.notes && hl.notes.length ? ` · ${hl.notes.join("; ")}` : ""}` : hl.reason}</td>
+            <td className="num">{hl.status === "ok" ? <>{num(hl.heat_loss_w_per_k, 0)} W per °C<Term k="w_per_k" /></> : "–"}</td>
+            <td className="muted">{hl.status === "ok" ? <>likely range {num(hl.ci_low_w_per_k, 0)} to {num(hl.ci_high_w_per_k, 0)} W per °C · confidence {Math.round((hl.confidence ?? 0) * 100)}% · heat stored per °C {hl.capacity_kwh_per_k != null ? `${hl.capacity_kwh_per_k} kWh` : "not learned"}<Term k="thermal_capacity" /> · time constant {hl.time_constant_h != null ? `${hl.time_constant_h} h` : "not learned"}<Term k="time_constant" /> · design temperature {hl.design_outdoor_c} °C ({hl.design_region})<Term k="design_temperature" />{hl.notes && hl.notes.length ? ` · ${hl.notes.join("; ")}` : ""}</> : hl.reason}</td>
           </tr>
           <tr>
-            <td>Heat pump, space heating</td>
+            <td>Heat pump efficiency, space heating<Term k="cop" /></td>
             <td><span className={`tag ${hp.heating.status === "ok" ? "measured" : ""}`}>{hp.heating.status === "ok" ? "learned" : "waiting"}</span></td>
             <td className="num">{hp.heating.observed_cop != null ? `COP ${num(hp.heating.observed_cop, 2)}` : "–"}</td>
-            <td className="muted">{hp.heating.status === "ok" ? `${hp.heating.running_hours} running hours over ${hp.heating.days_with_data} days · slope ${hp.heating.slope_per_degc} per °C · model confidence ${Math.round(hp.heating.model_confidence * 100)}% · capacity ${hp.capacity_kw} kW (${hp.capacity_source})` : hp.heating.reason}</td>
+            <td className="muted">{hp.heating.status === "ok" ? <>{hp.heating.running_hours} running hours over {hp.heating.days_with_data} days · efficiency changes by {hp.heating.slope_per_degc} per °C outside<Term k="slope" /> · model confidence {Math.round(hp.heating.model_confidence * 100)}% · most heat seen {hp.capacity_kw} kW ({hp.capacity_source})<Term k="capacity_source" /></> : hp.heating.reason}</td>
           </tr>
           <tr>
-            <td>Heat pump, hot water</td>
+            <td>Heat pump efficiency, hot water<Term k="cop" /></td>
             <td><span className={`tag ${hp.hot_water.status === "ok" ? "measured" : ""}`}>{hp.hot_water.status === "ok" ? "learned" : "waiting"}</span></td>
             <td className="num">{hp.hot_water.observed_cop != null ? `COP ${num(hp.hot_water.observed_cop, 2)}` : "–"}</td>
             <td className="muted">{hp.hot_water.status === "ok" ? `${hp.hot_water.running_hours} running hours over ${hp.hot_water.days_with_data} days` : hp.hot_water.reason}</td>
@@ -50,8 +57,8 @@ function MappingRow({ x, map, editable, onChange }: { x: SystemHealth["signals"]
   return (
     <tr>
       <td title={map?.description ?? ""}>{x.signal}</td>
-      <td><span className={`tag ${x.status === "available" ? (x.stale ? "bad" : "measured") : x.status === "degraded" ? "estimated" : ""}`}>{x.stale ? "stale" : x.status}</span>{map?.overridden ? <span className="tag" title="You chose this entity">yours</span> : null}</td>
-      <td className="muted">{x.quality}</td>
+      <td><span className={`tag ${x.status === "available" ? (x.stale ? "bad" : "measured") : x.status === "degraded" ? "estimated" : ""}`} title={x.stale ? GLOSSARY.stale : STATUS_LABEL[x.status]?.[1]}>{x.stale ? `not updating: ${x.age_minutes} min` : (STATUS_LABEL[x.status]?.[0] ?? x.status)}</span>{map?.overridden ? <span className="tag" title="You chose this entity on this page">chosen by you</span> : null}</td>
+      <td className="muted" title={QUALITY_LABEL[x.quality]?.[1]}>{QUALITY_LABEL[x.quality]?.[0] ?? x.quality}</td>
       <td className="mono muted" title={x.source ?? ""}>
         {editing ? (
           <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -88,8 +95,8 @@ export default function SystemPage() {
       <div className="grid">
         <div className="card"><h3>Operating mode</h3><div className="big" style={{ fontSize: "1.2rem" }}>{s.operating_mode}</div><div className="sub">change it on the Settings tab</div></div>
         <div className={`card ${s.control.holding ? "info" : ""}`}><h3>Control</h3><div className="big" style={{ fontSize: "1.2rem" }}>{!s.control.configured ? "Off" : s.control.holding ? `Holding ${s.control.commanded_c} °C` : "Armed"}</div><div className="sub">{s.control.configured ? `${s.control.entity} · ${s.control.last?.reason ?? "waiting for first cycle"}` : s.control.reason} · {s.record_counts.control_actions} log entries</div></div>
-        <div className="card"><h3>Signals</h3><div className="big">{avail.length}<span className="muted" style={{ fontSize: "1rem" }}> / {s.signals.length}</span></div><div className="sub">{avail.filter((x) => x.stale).length} stale</div></div>
-        <div className="card"><h3>Stored</h3><div className="big">{s.record_counts.measurements.toLocaleString()}</div><div className="sub">measurements · {s.record_counts.rate_intervals} rate slots · {s.record_counts.dispatches} dispatches</div></div>
+        <div className="card"><h3>Readings found<Term k="signals" /></h3><div className="big">{avail.length}<span className="muted" style={{ fontSize: "1rem" }}> of {s.signals.length}</span></div><div className="sub">{avail.filter((x) => x.stale).length} not updating</div></div>
+        <div className="card"><h3>Readings stored</h3><div className="big">{s.record_counts.measurements.toLocaleString("en-GB")}</div><div className="sub">plus {s.record_counts.rate_intervals.toLocaleString("en-GB")} half-hour prices and {s.record_counts.dispatches} EV charging slots</div></div>
       </div>
 
       <div className="section">
@@ -104,12 +111,12 @@ export default function SystemPage() {
         ) : (
           <div className="grid">
             <div className={`card ${s.forecast_accuracy.meets_target ? "info" : "warn"}`}>
-              <h3>Indoor temperature error</h3>
+              <h3>Typical indoor temperature error<Term k="forecast_error" /></h3>
               <div className="big">{s.forecast_accuracy.rmse_baseline_c?.toFixed(2)} °C</div>
-              <div className="sub">RMSE over {s.forecast_accuracy.points} half-hours in {s.forecast_accuracy.runs} plans · target {s.forecast_accuracy.target_rmse_c} °C</div>
+              <div className="sub">over {s.forecast_accuracy.points} half-hours in {s.forecast_accuracy.runs} plans · target under {s.forecast_accuracy.target_rmse_c} °C before control is trusted</div>
             </div>
             <div className="card">
-              <h3>Bias</h3>
+              <h3>Runs warm or cold<Term k="bias" /></h3>
               <div className="big">{(s.forecast_accuracy.bias_baseline_c ?? 0) > 0 ? "+" : ""}{s.forecast_accuracy.bias_baseline_c?.toFixed(2)} °C</div>
               <div className="sub">positive means the model runs warm · mean absolute error {s.forecast_accuracy.mae_baseline_c?.toFixed(2)} °C</div>
             </div>
@@ -136,7 +143,7 @@ export default function SystemPage() {
       <div className="section">
         <h2>Integrations discovered</h2>
         <div className="tablewrap"><table>
-          <thead><tr><th>Platform</th><th>Present</th><th className="num">Entities</th><th className="num">Live</th><th>Config</th></tr></thead>
+          <thead><tr><th>Integration</th><th>Present</th><th className="num">Entities</th><th className="num">Live</th><th>Set-up state</th></tr></thead>
           <tbody>{s.integrations.map((i) => (
             <tr key={i.platform}><td>{i.platform}</td><td>{i.present ? "yes" : "no"}</td><td className="num">{i.entities}</td><td className="num">{i.live_entities}</td><td className="muted">{i.config_state ?? ""}</td></tr>
           ))}</tbody>
@@ -146,7 +153,7 @@ export default function SystemPage() {
       <div className="section">
         <h2>Signal mapping and freshness</h2>
         <div className="tablewrap"><table>
-          <thead><tr><th>Signal</th><th>Status</th><th>Quality</th><th>Source</th><th className="num">Last value</th><th className="num">Age (min)</th><th>Notes</th><th></th></tr></thead>
+          <thead><tr><th>Signal<Term k="signals" /></th><th>Status</th><th>Data quality</th><th>Home Assistant entity</th><th className="num">Last value</th><th className="num">Age (minutes)</th><th>Notes</th><th></th></tr></thead>
           <tbody>{s.signals.map((x) => (
             <MappingRow key={x.signal} x={x} map={mapping?.signals.find((m) => m.signal === x.signal)} editable={!!mapping?.editable} onChange={setMapping} />
           ))}</tbody>
@@ -154,7 +161,7 @@ export default function SystemPage() {
       </div>
 
       <div className="section">
-        <h2>Recent data quality events</h2>
+        <h2>Recent data quality events<Term k="events" /></h2>
         {s.recent_events.length === 0 ? <p className="muted">None.</p> : (
           <div className="tablewrap"><table>
             <thead><tr><th>Time</th><th>Severity</th><th>Source</th><th>Message</th></tr></thead>

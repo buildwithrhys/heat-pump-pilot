@@ -1,4 +1,5 @@
 import type { ShadowPlan } from "../api";
+import { Term, tip } from "../glossary";
 
 const fmt = (iso: string, withDay: boolean) =>
   new Date(iso).toLocaleString("en-GB", withDay ? { weekday: "short", hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" });
@@ -24,14 +25,14 @@ export function PlanList({ plan, compact = false, skipKey }: { plan: ShadowPlan;
       )}
       <table>
         <thead>
-          <tr><th>When</th><th>Action</th>{!compact && <th>Rate</th>}<th>Why</th></tr>
+          <tr><th>When</th><th>Action</th>{!compact && <th>Price then<Term k="tariff_now" /></th>}<th>Why</th></tr>
         </thead>
         <tbody>
           {actions.map((a, i) => (
             <tr key={i}>
               <td style={{ whiteSpace: "nowrap" }}>{when(a.start, a.end)}</td>
               <td style={{ whiteSpace: "nowrap" }}><span className={`tag ${a.kind}`}>{a.label}</span></td>
-              {!compact && <td>{a.rate_p == null ? "–" : `${a.rate_p.toFixed(1)}p`}{a.saving_p_per_kwh ? ` (saves ~${a.saving_p_per_kwh.toFixed(0)}p/kWh)` : ""}</td>}
+              {!compact && <td>{a.rate_p == null ? "–" : `${a.rate_p.toFixed(1)}p per kWh`}{a.saving_p_per_kwh ? <span title={tip("saving_vs")}> (about {a.saving_p_per_kwh.toFixed(0)}p per kWh cheaper than the period it avoids)</span> : ""}</td>}
               <td className="muted">{a.reason}</td>
             </tr>
           ))}
