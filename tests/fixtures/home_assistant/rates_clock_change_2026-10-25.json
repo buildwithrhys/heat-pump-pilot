@@ -1,0 +1,4 @@
+{"tariff":"E-1R-INTELLI-VAR-24-10-29-K","note":"50 half-hour slots: BST ends 2026-10-25 02:00 BST -> 01:00 GMT. Rates inc VAT GBP/kWh. Off-peak 23:30-05:30 local. Slot 05:30-06:00 and 07:00-13:00 UTC adjusted by started dispatch.",
+ "local_day":"2026-10-25",
+ "offpeak_value":0.066,"peak_value":0.360965,
+ "intelligent_adjusted_utc":[["2026-10-25T05:30:00+00:00","2026-10-25T06:00:00+00:00"],["2026-10-25T07:00:00+00:00","2026-10-25T13:00:00+00:00"]]}

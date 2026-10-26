@@ -1,0 +1,7 @@
+services:
+  predheat:
+    build: .
+    env_file: .env
+    ports: ["8750:8750"]
+    volumes: ["./data:/app/data"]
+    restart: unless-stopped

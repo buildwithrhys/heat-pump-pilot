@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+data/
+.env
+docs/discovery/latest.*
+frontend/node_modules/
+frontend/dist/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+dist/
+build/
+*.egg-info/

@@ -1,0 +1,6 @@
+{
+  "ua_w_per_k": 180.0,
+  "capacity_kwh_per_k": 6.0,
+  "internal_gain_kw": 0.35,
+  "solar_aperture_m2": 6.0
+}
