@@ -28,7 +28,7 @@ from ...domain import (
 )
 from ..base import ProviderHealth
 from .client import HAClient, HAState
-from .discovery import discover_capabilities
+from .discovery import discover_capabilities, propose_mappings
 
 
 @dataclass
@@ -62,6 +62,25 @@ def mapping_from_report(report: CapabilityReport) -> list[MappedSignal]:
     return out
 
 
+def apply_overrides(report: CapabilityReport, overrides: dict[str, dict[str, Any]], states: dict[str, HAState] | None = None) -> CapabilityReport:
+    """Replace discovered sources with user-confirmed ones. ``overrides`` maps signal -> {source_ref, unit}."""
+    if not overrides:
+        return report
+    caps = []
+    for cap in report.capabilities:
+        o = overrides.get(cap.signal.value)
+        if not o:
+            caps.append(cap)
+            continue
+        st = (states or {}).get(o["source_ref"])
+        live = st.is_live if st else True
+        # a user's choice is always mapped, even while the entity is unavailable, so it recovers on its own
+        caps.append(cap.model_copy(update={"source_ref": o["source_ref"], "unit": o.get("unit") or (st.unit if st else cap.unit),
+                                           "status": "available", "confidence": 1.0,
+                                           "notes": "chosen by you" + ("" if live else f"; state is currently {st.state}")}))
+    return report.model_copy(update={"capabilities": caps})
+
+
 def measurement_from_state(m: MappedSignal, state: HAState, now: datetime) -> Measurement | None:
     spec = SIGNAL_CATALOGUE[m.signal]
     ts = state.last_updated or now
@@ -88,12 +107,26 @@ class HATelemetryProvider:
         self._last_ok: datetime | None = None
         self._last_error: str | None = None
 
+    overrides: dict[str, dict[str, Any]] | None = None
+
     async def discover(self) -> CapabilityReport:
         states = await self.client.states_with_registry()
         entries = await self.client.config_entries()
         report = discover_capabilities(states, entries)
-        if not self.mapping:
-            self.mapping = mapping_from_report(report)
+        self.last_states = {s.entity_id: s for s in states}
+        self.last_candidates = {sig.value: [(st.entity_id, round(sc, 2), note) for st, sc, note in cands[:6]]
+                                for sig, cands in propose_mappings(states).items()}
+        report = apply_overrides(report, self.overrides or {}, self.last_states)
+        self.mapping = mapping_from_report(report)
+        return report
+
+    def set_overrides(self, overrides: dict[str, dict[str, Any]], report: CapabilityReport | None = None) -> CapabilityReport | None:
+        """Apply new overrides to the last report without a round trip to Home Assistant."""
+        self.overrides = overrides
+        if report is None:
+            return None
+        report = apply_overrides(report, overrides, getattr(self, "last_states", None))
+        self.mapping = mapping_from_report(report)
         return report
 
     async def read_measurements(self) -> list[Measurement]:
@@ -125,7 +158,14 @@ class HATelemetryProvider:
         the middle of the hour.
         """
         ids = [m.entity_id for m in self.mapping]
-        stats = await self.client.statistics(ids, start, end, period="hour")
+        stats: dict[str, list[dict[str, Any]]] = {}
+        chunk = timedelta(days=14)
+        t = start
+        while t < end:  # keep each websocket reply small enough for long backfills
+            part = await self.client.statistics(ids, t, min(t + chunk, end), period="hour")
+            for eid, rows in part.items():
+                stats.setdefault(eid, []).extend(rows)
+            t += chunk
         by_id = {m.entity_id: m for m in self.mapping}
         now = datetime.now(tz=timezone.utc)
         out: list[Measurement] = []
@@ -147,8 +187,11 @@ class HATelemetryProvider:
                     ts = t0 + (t1 - t0) / 2
                 if val is None:
                     continue
+                # statistics rows carry their own source tag: they may sit on a different baseline
+                # from the live sensor (HA restates and re-bases long-term statistics), so they
+                # must never be differenced against live readings.
                 out.append(Measurement(signal=m.signal, ts=ts, value=float(val) * m.unit_scale,
-                                       quality=m.quality, provenance=m.provenance, source_ref=eid))
+                                       quality=m.quality, provenance=m.provenance, source_ref=f"{eid}#statistics"))
         return out
 
     async def health(self) -> ProviderHealth:
@@ -258,8 +301,24 @@ class HAOctopusTariffProvider:
 
     async def rate_history(self, start: datetime, end: datetime) -> list[RateInterval]:
         # The HA integration exposes only previous/current/next day; history accrues
-        # through regular polling. A direct Octopus API client fills this in Milestone 1.2.
+        # through regular polling. The direct Octopus API client fills this in when configured.
         return []
+
+    async def metered_intervals(self) -> list[tuple[datetime, datetime, float]]:
+        """Half-hourly metered import from the Octopus integration's accumulative consumption
+        sensors (smart meter data for yesterday, Home Mini data for today). The best whole-home
+        series there is: metered, half-hourly, no counter arithmetic."""
+        states = {s.entity_id: s for s in await self.client.states() if s.entity_id.startswith("sensor.octopus_energy_electricity")}
+        out: list[tuple[datetime, datetime, float]] = []
+        for eid, s in states.items():
+            if "export" in eid or not (eid.endswith("_previous_accumulative_consumption") or eid.endswith("_current_accumulative_consumption")):
+                continue
+            for c in s.attributes.get("charges") or []:
+                try:
+                    out.append((_parse_dt(c["start"]), _parse_dt(c["end"]), float(c["consumption"])))
+                except (KeyError, TypeError, ValueError):
+                    continue
+        return out
 
     async def health(self) -> ProviderHealth:
         return ProviderHealth(self.name, self._last_error is None, self._last_ok, self._last_error)

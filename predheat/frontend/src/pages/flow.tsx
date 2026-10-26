@@ -19,7 +19,7 @@ export function EnergyFlow({ costs, title, days = 1 }: { costs: Costs; title: st
   const dhwHeat = costs.hot_water.kwh_heat ?? 0;
   const envSh = shHeat - shElec;
   const envDhw = dhwHeat - dhwElec;
-  const imp = costs.whole_home_import.kwh;
+  const imp = costs.whole_home_import.plausible === false ? 0 : costs.whole_home_import.kwh;
   const gridToHp = imp > 0 ? Math.min(hpElec, imp) : hpElec;
   const onsite = imp > 0 ? Math.max(hpElec - imp, 0) : 0;
   const freeAir = envSh + envDhw;
@@ -90,7 +90,7 @@ export function EnergyFlow({ costs, title, days = 1 }: { costs: Costs; title: st
       </ResponsiveContainer>
       <p style={{ fontSize: 13, margin: "6px 8px 2px" }}>
         For every 1 kWh of electricity, the heat pump delivered {kwh(ratio)} kWh of heat; {kwh(freePerKwh)} kWh of that came free from the outside air.
-        {imp > 0 ? ` The heat pump used ${kwh(hpElec)} kWh of the home's ${kwh(imp)} kWh of electricity${days === 1 ? " today" : ` over ${days} days`}.` : ""}
+        {imp > 0 && costs.whole_home_import.plausible !== false ? ` The heat pump used ${kwh(hpElec)} kWh of the home's ${kwh(imp)} kWh of electricity${days === 1 ? " today" : ` over ${days} days`}.` : imp > 0 ? " Whole-home import is not shown because its data looks wrong; see System health." : ""}
       </p>
       <p className="muted" style={{ fontSize: 12, margin: "2px 8px 4px" }}>
         Free heat from outside air is heat delivered minus electricity used. Heat pump energy figures are manufacturer estimates from the controller, not independent meter readings.

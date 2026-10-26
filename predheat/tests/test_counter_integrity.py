@@ -69,3 +69,66 @@ def test_purge_removes_only_on_the_hour_counter_rows(tmp_path):
         assert repo.purge_misstamped_history(s, prop.id) == 0  # once only
         left = s.query(mdl.SensorMeasurement).count()
         assert left == 2
+
+
+def test_restated_reading_from_a_second_source_is_not_energy():
+    t = datetime(2026, 10, 26, 10, 0, tzinfo=UTC)
+    a = [m(t + timedelta(minutes=5 * i), 54052.0 + 0.1 * i) for i in range(12)]
+    b = [Measurement(signal=Signal.GRID_IMPORT_KWH, ts=t + timedelta(minutes=30), value=28371.0, quality=Quality.METERED,
+                     provenance=Provenance.OCTOPUS_HA, source_ref="other")]
+    total = sum(i.kwh for i in counter_to_intervals(a + b, "grid_import"))
+    assert total < 1.5
+
+
+def test_impossible_jump_is_ignored():
+    t = datetime(2026, 10, 26, 10, 0, tzinfo=UTC)
+    ints = counter_to_intervals([m(t, 100.0), m(t + timedelta(minutes=30), 100.4), m(t + timedelta(minutes=60), 25780.0), m(t + timedelta(minutes=90), 25780.3)], "x")
+    assert abs(sum(i.kwh for i in ints) - 0.7) < 1e-6
+    assert any("jump_ignored" in i.notes for i in ints)
+
+
+def test_realistic_two_days_of_octopus_total_consumption_give_a_sane_daily_total(tmp_path):
+    """Models the live sensor: ~10 s updates with small increments and occasional repeats,
+    plus hourly statistics rows on a different baseline (re-based by Home Assistant) stamped
+    at the end of each hour, plus a re-stated late value. The day's total must match the
+    meter's true change within 10%."""
+    from predheat.db import init_db, session_scope
+    from predheat.service import repository as repo
+    from predheat.timeutils import local_day_bounds
+
+    url = f"sqlite:///{tmp_path / 'oct.sqlite'}"
+    init_db(url)
+    eid = "sensor.octopus_energy_electricity_19l2379200_2100040663425_current_total_consumption"
+    day_start, day_end = local_day_bounds(datetime(2026, 10, 25).date())
+    t = day_start - timedelta(hours=6)
+    live_v = 54020.0
+    rows = []
+    import random
+
+    rng = random.Random(3)
+    truth_at: dict[datetime, float] = {}
+    while t < day_end + timedelta(hours=6):
+        rate_kw = 0.3 + (3.5 if 6 <= t.hour < 9 or 17 <= t.hour < 21 else 0.6) * rng.random()
+        live_v += rate_kw * (5 / 60)
+        rows.append(Measurement(signal=Signal.GRID_IMPORT_KWH, ts=t, value=round(live_v, 3), quality=Quality.METERED, provenance=Provenance.OCTOPUS_HA, source_ref=eid))
+        if rng.random() < 0.2:  # repeated/unchanged sample re-sent with the same timestamp
+            rows.append(Measurement(signal=Signal.GRID_IMPORT_KWH, ts=t, value=round(live_v, 3), quality=Quality.METERED, provenance=Provenance.OCTOPUS_HA, source_ref=eid))
+        truth_at[t] = live_v
+        if t.minute == 55:  # statistics for the hour, on a different baseline, stamped at hour end
+            rows.append(Measurement(signal=Signal.GRID_IMPORT_KWH, ts=t + timedelta(minutes=5), value=round(live_v - 25680.0, 3), quality=Quality.METERED,
+                                    provenance=Provenance.OCTOPUS_HA, source_ref=eid + "#statistics"))
+        t += timedelta(minutes=5)
+    # a value re-stated two hours late, slightly different
+    rows.append(Measurement(signal=Signal.GRID_IMPORT_KWH, ts=day_start + timedelta(hours=3), value=round(truth_at[day_start + timedelta(hours=3)] + 0.05, 3),
+                            quality=Quality.METERED, provenance=Provenance.OCTOPUS_HA, source_ref=eid))
+    with session_scope(url) as s:
+        prop = repo.ensure_property(s, "p", "Europe/London")
+        repo.upsert_measurements(s, prop.id, rows)
+        stored = repo.measurements_for(s, prop.id, Signal.GRID_IMPORT_KWH.value, day_start - timedelta(hours=1), day_end + timedelta(hours=1))
+        meas = [Measurement(signal=Signal.GRID_IMPORT_KWH, ts=r.ts.replace(tzinfo=UTC) if r.ts.tzinfo is None else r.ts, value=r.value, quality=Quality.METERED,
+                            provenance=Provenance.OCTOPUS_HA, source_ref=r.source_ref) for r in stored]
+    ints = [i for i in counter_to_intervals(meas, "grid_import") if day_start <= i.start < day_end]
+    total = sum(i.kwh for i in ints)
+    truth = truth_at[max(k for k in truth_at if k < day_end)] - truth_at[max(k for k in truth_at if k <= day_start)]
+    assert 15 < truth < 60
+    assert abs(total - truth) / truth < 0.10, (total, truth)

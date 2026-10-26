@@ -33,15 +33,15 @@ def test_validation_ranges(tmp_path: Path):
             st.update(bad, s)
 
 
-def test_controlling_mode_needs_the_supervisor_gate(tmp_path: Path):
+def test_controlling_mode_needs_the_gate(tmp_path: Path):
     st = SettingsStore.load(tmp_path)
-    s = Settings(data_mode=DataMode.SIMULATED, control_enabled=False)
+    s = Settings(data_mode=DataMode.SIMULATED)
     with pytest.raises(SettingsError):
         st.update({"operating_mode": "balanced"}, s)
-    s2 = Settings(data_mode=DataMode.SIMULATED, control_enabled=True, control_climate_entity="climate.x")
-    st.update({"operating_mode": "balanced"}, s2)
-    assert s2.operating_mode == OperatingMode.BALANCED
-    assert st.reset("operating_mode", s2)["operating_mode"] == "monitor"
+    st.update({"control_enabled": True, "control_climate_entity": "climate.x"}, s)
+    st.update({"operating_mode": "balanced"}, s)
+    assert s.operating_mode == OperatingMode.BALANCED and s.control_enabled and s.control_climate_entity == "climate.x"
+    assert st.reset("operating_mode", s)["operating_mode"] == "monitor"
 
 
 def test_migration_from_options_once(tmp_path: Path):
@@ -70,7 +70,7 @@ def test_api_settings_round_trip_and_gate(tmp_path: Path):
         r = c.put("/api/settings", json={"gas_price_p_per_kwh": 7.0, "operating_mode": "shadow"})
         assert r.status_code == 200 and r.json()["effective"]["operating_mode"] == "shadow"
         assert c.get("/api/health").json()["operating_mode"] == "shadow"
-        assert c.put("/api/settings", json={"operating_mode": "balanced"}).status_code == 400
+        assert c.put("/api/settings", json={"operating_mode": "balanced"}).status_code == 400  # gate off
         assert c.put("/api/settings", json={"boiler_efficiency": 3}).status_code == 400
         r = c.post("/api/settings/reset?key=gas_price_p_per_kwh")
         assert r.json()["values"]["gas_price_p_per_kwh"] == 6.24
@@ -82,4 +82,4 @@ def test_addon_env_no_longer_carries_runtime_options():
 
     env = env_from_options({"operating_mode": "shadow", "gas_price_p_per_kwh": 5.5, "control_enabled": True, "control_climate_entity": "climate.x"}, "tok")
     assert "PREDHEAT_OPERATING_MODE" not in env and "PREDHEAT_GAS_PRICE_P_PER_KWH" not in env
-    assert env["PREDHEAT_CONTROL_ENABLED"] == "true"
+    assert "PREDHEAT_CONTROL_ENABLED" not in env and env["PREDHEAT_DATA_MODE"] == "home_assistant"

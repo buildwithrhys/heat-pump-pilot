@@ -1,9 +1,4 @@
 configuration:
-  data_mode:
-    name: Data source
-    description: >-
-      "home_assistant" reads live data from this Home Assistant instance. "simulated" runs a synthetic
-      house so you can explore the dashboard without any hardware.
   poll_seconds:
     name: Collection interval (seconds)
     description: >-
@@ -12,17 +7,6 @@ configuration:
     name: Log level
     description: >-
       Detail in the add-on's Log tab. Use "debug" only while diagnosing a problem.
-  control_enabled:
-    name: Allow control
-    description: >-
-      Lets PredHeat move your room setpoint when the dashboard's operating mode is Balanced or Max
-      savings. Switch on only after a week in Shadow mode with heat loss confidence of 50% or more; see
-      the Documentation tab.
-  control_climate_entity:
-    name: Climate entity to control
-    description: >-
-      The climate entity for your heating zone, for example climate.house_zone_1_circuit_0_climate.
-      Required for control; see the Documentation tab.
 network:
   8750/tcp: >-
     Optional direct access to the dashboard and API without ingress. Leave disabled unless needed.

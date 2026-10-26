@@ -1,22 +1,47 @@
-import { useEffect, useState } from "react";
-import { api, MODE_LABEL, type SettingsDoc } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { announceMode, api, MODE_LABEL, type ClimateEntity, type Preconditions, type SettingsDoc, type SettingsField } from "../api";
 
-const ORDER = ["operating_mode", "control_max_offset_c", "gas_price_p_per_kwh", "boiler_efficiency", "design_outdoor_c", "survey_heat_loss_kw", "survey_outdoor_c", "heat_pump_rated_kw"];
+type Val = number | string | boolean | null;
+const GROUPS: { key: "control" | "comparisons" | "advanced"; title: string; blurb: string }[] = [
+  { key: "control", title: "Control", blurb: "Whether PredHeat may act, on what, and how far." },
+  { key: "comparisons", title: "Comparisons", blurb: "Figures used for the gas comparison and the survey check on the Overview." },
+  { key: "advanced", title: "Advanced", blurb: "Rarely needed." },
+];
+const ORDER: Record<string, string[]> = {
+  control: ["control_enabled", "control_climate_entity", "operating_mode", "control_max_offset_c"],
+  comparisons: ["gas_price_p_per_kwh", "boiler_efficiency", "survey_heat_loss_kw", "survey_outdoor_c", "heat_pump_rated_kw"],
+  advanced: ["design_outdoor_c"],
+};
 
 export default function SettingsPage() {
   const [doc, setDoc] = useState<SettingsDoc | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const [entities, setEntities] = useState<ClimateEntity[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
+  const [savedKey, setSavedKey] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<Preconditions | null>(null);
+  const [ack, setAck] = useState(false);
+  const timer = useRef<number | null>(null);
+
+  const adopt = (d: SettingsDoc) => {
+    setDoc(d);
+    setDraft(Object.fromEntries(Object.entries(d.values).map(([k, v]) => [k, v == null ? "" : String(v)])));
+    announceMode(d.effective.operating_mode, d.effective.control_enabled && !!d.effective.climate_entity);
+  };
   useEffect(() => {
-    api.settings().then((d) => { setDoc(d); setDraft(Object.fromEntries(Object.entries(d.values).map(([k, v]) => [k, String(v)]))); }).catch((e) => setErr(String(e)));
+    api.settings().then(adopt).catch((e) => setErr(String(e)));
+    api.climateEntities().then((r) => setEntities(r.entities)).catch(() => setEntities([]));
   }, []);
   if (err && !doc) return <p className="err">{err}</p>;
   if (!doc) return <p className="muted">Loading…</p>;
 
-  const clientCheck = (key: string, raw: string): string | null => {
-    const f = doc.fields[key];
-    if (f.type === "enum") return f.choices?.includes(raw) ? null : "Choose one of the options";
+  const flash = (key: string) => { setSavedKey(key); if (timer.current) window.clearTimeout(timer.current); timer.current = window.setTimeout(() => setSavedKey(null), 2500); };
+  const commit = async (key: string, value: Val, extra: Record<string, Val> = {}) => {
+    setErr(null);
+    try { adopt(await api.saveSettings({ [key]: value, ...extra })); flash(key); }
+    catch (e) { setErr(String((e as Error).message)); setDraft((x) => ({ ...x, [key]: doc.values[key] == null ? "" : String(doc.values[key]) })); }
+  };
+  const check = (f: SettingsField, raw: string): string | null => {
     if (raw.trim() === "" && f.optional) return null;
     const v = Number(raw);
     if (raw.trim() === "" || Number.isNaN(v)) return "Enter a number";
@@ -24,63 +49,135 @@ export default function SettingsPage() {
     if (f.max != null && v > f.max) return `Must be at most ${f.max}`;
     return null;
   };
-  const save = async (key: string) => {
-    setErr(null); setSaved(null);
-    const problem = clientCheck(key, draft[key]);
-    if (problem) { setErr(`${doc.fields[key].label}: ${problem}`); return; }
-    try {
-      const d = await api.saveSettings({ [key]: doc.fields[key].type === "enum" ? draft[key] : draft[key].trim() === "" ? null : Number(draft[key]) });
-      setDoc(d); setSaved(`${doc.fields[key].label} saved and applied`);
-    } catch (e) { setErr(String((e as Error).message)); }
+  const blurNumber = (key: string) => {
+    const f = doc.fields[key];
+    const raw = draft[key] ?? "";
+    const current = doc.values[key] == null ? "" : String(doc.values[key]);
+    if (raw === current) return;
+    const problem = check(f, raw);
+    if (problem) { setErr(`${f.label}: ${problem}`); return; }
+    commit(key, raw.trim() === "" ? null : Number(raw));
   };
-  const reset = async (key: string) => {
-    setErr(null); setSaved(null);
-    try { const d = await api.resetSetting(key); setDoc(d); setDraft((x) => ({ ...x, [key]: d.values[key] == null ? "" : String(d.values[key]) })); setSaved(`${doc.fields[key].label} reset to default`); }
-    catch (e) { setErr(String((e as Error).message)); }
+  const toggleGate = async (on: boolean) => {
+    if (!on) { commit("control_enabled", false); return; }
+    try { setDialog(await api.preconditions()); setAck(false); } catch (e) { setErr(String((e as Error).message)); }
   };
-  const gateOff = !doc.gate.control_possible;
+  const confirmGate = async () => {
+    if (!dialog) return;
+    await commit("control_enabled", true, dialog.all_met ? {} : { acknowledged: true });
+    setDialog(null);
+  };
+  const resetAll = async () => {
+    setErr(null);
+    try { adopt(await api.resetSetting()); flash("__all"); } catch (e) { setErr(String((e as Error).message)); }
+  };
+  const gateOn = !!doc.values.control_enabled;
+  const possible = doc.gate.control_possible;
+  const entity = (doc.values.control_climate_entity as string | null) ?? null;
+  const Saved = ({ k }: { k: string }) => (savedKey === k ? <span className="tag measured" style={{ marginLeft: 8 }}>Saved</span> : null);
+
+  const field = (key: string) => {
+    const f = doc.fields[key];
+    if (!f) return null;
+    if (f.type === "bool") {
+      return (
+        <div className="card" key={key}>
+          <h3>{f.label}<Saved k={key} /></h3>
+          <label style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
+            <span className={`switch ${gateOn ? "on" : ""}`} role="switch" aria-checked={gateOn} tabIndex={0} onClick={() => toggleGate(!gateOn)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") toggleGate(!gateOn); }} />
+            <span style={{ fontSize: 20, fontWeight: 300 }}>{gateOn ? "On" : "Off"}</span>
+          </label>
+          <div className="sub" style={{ marginTop: 8 }}>{f.help}</div>
+        </div>
+      );
+    }
+    if (f.type === "entity") {
+      return (
+        <div className="card" key={key}>
+          <h3>{f.label}<Saved k={key} /></h3>
+          <select value={entity ?? ""} onChange={(e) => commit(key, e.target.value || null)} style={{ width: "100%" }}>
+            <option value="">{entities.length ? "Choose a heating zone" : "No climate entities found yet"}</option>
+            {entities.map((e) => <option key={e.entity_id} value={e.entity_id}>{e.name}{e.platform === "mypyllant" ? " (myVAILLANT)" : ""} · {e.entity_id}</option>)}
+          </select>
+          <div className="sub" style={{ marginTop: 8 }}>{f.help}{entities.length === 0 ? " PredHeat lists the climate entities it finds in Home Assistant after its first collection." : ""}</div>
+        </div>
+      );
+    }
+    if (f.type === "enum") {
+      return (
+        <div key={key} style={{ gridColumn: "1 / -1" }}>
+          <h3 style={{ fontSize: 12, fontWeight: 500, letterSpacing: 0.2, color: "var(--muted)", margin: "0 0 8px" }}>{f.label}<Saved k={key} /></h3>
+          <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+            {f.choices?.map((c) => {
+              const controlling = c === "balanced" || c === "max_savings";
+              const disabled = controlling && !possible;
+              const active = doc.values.operating_mode === c;
+              return (
+                <button key={c} type="button" disabled={disabled} onClick={() => commit(key, c)} className={`card radio ${active ? "active" : ""}`} style={{ textAlign: "left", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1, font: "inherit" }} aria-pressed={active}>
+                  <h3 style={{ color: active ? "var(--primary)" : undefined }}>{f.labels?.[c] ?? c}{active ? <span className="tag measured">current</span> : null}</h3>
+                  <div style={{ fontSize: 13 }}>{f.lines?.[c]}</div>
+                  {disabled && <div className="sub">{doc.gate.message ?? "Needs Allow control on"}</div>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="card" key={key}>
+        <h3>{f.label}{f.unit ? <span className="muted"> ({f.unit})</span> : null}<Saved k={key} /></h3>
+        <input type="number" value={draft[key] ?? ""} min={f.min} max={f.max} step={f.step} placeholder={f.optional ? "not set" : undefined}
+          onChange={(e) => setDraft((x) => ({ ...x, [key]: e.target.value }))} onBlur={() => blurNumber(key)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+          style={{ width: "100%", font: "inherit", fontSize: 20, fontWeight: 300, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--background)", color: "var(--foreground)" }} />
+        <div className="sub" style={{ marginTop: 8 }}>{f.help}</div>
+      </div>
+    );
+  };
 
   return (
     <>
-      <div className="grid">
-        <div className="card"><h3>Operating mode</h3><div className="big" style={{ fontSize: "1.2rem" }}>{MODE_LABEL[doc.effective.operating_mode] ?? doc.effective.operating_mode}</div><div className="sub">in effect now</div></div>
-        <div className={`card ${doc.gate.control_possible ? "info" : ""}`}><h3>Control gate</h3><div className="big" style={{ fontSize: "1.2rem" }}>{doc.gate.control_possible ? "On" : "Off"}</div><div className="sub">{doc.gate.allow_control ? "Allow control is on" : "Allow control is off"} · set in the add-on configuration</div></div>
-        <div className="card"><h3>Climate entity</h3><div className="big" style={{ fontSize: "1rem", wordBreak: "break-all" }}>{doc.gate.climate_entity ?? "none"}</div><div className="sub">the only entity PredHeat may write to</div></div>
-        <div className="card"><h3>Data source</h3><div className="big" style={{ fontSize: "1.2rem" }}>{doc.effective.data_mode === "simulated" ? "Simulated" : "Home Assistant"}</div><div className="sub">set in the add-on configuration</div></div>
-      </div>
+      <p style={{ margin: "0 0 14px", fontSize: 14 }}>
+        <strong>{MODE_LABEL[doc.effective.operating_mode] ?? doc.effective.operating_mode}</strong> · control {possible ? "on" : "off"} · climate entity: {entity ?? "none"}
+      </p>
       {err && <div className="note urgent">{err}</div>}
-      {saved && <div className="note">{saved}</div>}
-      <div className="section">
-        <h2>Preferences and house facts</h2>
-        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>Changes apply immediately, no restart. The full explanation of each mode and of control is on the add-on's Documentation tab.</p>
-        <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
-          {ORDER.map((key) => {
-            const f = doc.fields[key];
-            const current = doc.values[key] == null ? "" : String(doc.values[key]);
-            const dirty = draft[key] !== current;
-            return (
-              <div className="card" key={key}>
-                <h3>{f.label}{f.unit ? <span className="muted"> ({f.unit})</span> : null}</h3>
-                {f.type === "enum" ? (
-                  <select value={draft[key]} onChange={(e) => setDraft((x) => ({ ...x, [key]: e.target.value }))} style={{ width: "100%" }}>
-                    {f.choices?.map((c) => {
-                      const controlling = c === "balanced" || c === "max_savings";
-                      return <option key={c} value={c} disabled={controlling && gateOff}>{(f.labels?.[c] ?? c) + (controlling && gateOff ? " (enable control in the add-on configuration)" : "")}</option>;
-                    })}
-                  </select>
-                ) : (
-                  <input type="number" value={draft[key]} min={f.min} max={f.max} step={f.step} onChange={(e) => setDraft((x) => ({ ...x, [key]: e.target.value }))} style={{ width: "100%", font: "inherit", fontSize: 20, fontWeight: 300, padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--background)", color: "var(--foreground)" }} />
-                )}
-                <div className="sub" style={{ marginTop: 8 }}>{f.help}{key === "operating_mode" && gateOff ? ` ${doc.gate.message}.` : ""}</div>
-                <div className="row" style={{ marginTop: 10, marginBottom: 0 }}>
-                  <button className="chip" onClick={() => save(key)} disabled={!dirty} style={{ background: dirty ? "var(--primary-fill)" : undefined, color: dirty ? "var(--primary-deep)" : undefined, borderColor: dirty ? "var(--primary-fill)" : undefined, cursor: dirty ? "pointer" : "default" }}>Save</button>
-                  <button className="chip" onClick={() => reset(key)} disabled={current === (f.default == null ? "" : String(f.default))} style={{ cursor: "pointer" }}>{f.default == null ? "Clear" : `Reset to default (${f.type === "enum" ? (f.labels?.[String(f.default)] ?? f.default) : f.default}${f.unit ? ` ${f.unit}` : ""})`}</button>
-                </div>
-              </div>
-            );
-          })}
+      {GROUPS.map((g) => (
+        <div className="section" key={g.key}>
+          <h2>{g.title}</h2>
+          <p className="muted" style={{ fontSize: 13, margin: "0 0 10px" }}>{g.blurb}</p>
+          <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>{ORDER[g.key].map(field)}</div>
         </div>
-      </div>
+      ))}
+      <p className="muted" style={{ fontSize: 13, marginTop: 20 }}>
+        Changes save as you make them and apply at once. <button type="button" className="linkish" onClick={resetAll}>Reset all to defaults</button>{savedKey === "__all" ? <span className="tag measured" style={{ marginLeft: 8 }}>Reset</span> : null}. The full explanation of each mode and of control is on the add-on's Documentation tab.
+      </p>
+
+      {dialog && (
+        <div className="modal-backdrop" onClick={() => setDialog(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+            <h2 style={{ fontSize: 18, textTransform: "none", letterSpacing: 0 }}>Allow PredHeat to control the heating?</h2>
+            <p style={{ fontSize: 14 }}>PredHeat will move your room setpoint by up to {dialog.max_offset_c} °C (1.5 times that in Max savings, capped at 2 °C) when the operating mode is Balanced or Max savings. These are the preconditions and whether each is met now:</p>
+            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 12px" }}>
+              {dialog.checks.map((c) => (
+                <li key={c.key} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "6px 0", borderBottom: "1px solid var(--line)" }}>
+                  <span className={`tag ${c.met ? "measured" : "bad"}`} style={{ marginLeft: 0 }}>{c.met ? "met" : "not met"}</span>
+                  <span style={{ flex: 1 }}>{c.label}<span className="muted"> · {c.detail}</span></span>
+                </li>
+              ))}
+            </ul>
+            {!dialog.all_met && (
+              <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 14, marginBottom: 12 }}>
+                <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} style={{ marginTop: 3 }} />
+                <span>I understand PredHeat may move my room setpoint by up to {dialog.max_offset_c} °C even though not every precondition is met.</span>
+              </label>
+            )}
+            <div className="row" style={{ justifyContent: "flex-end", marginBottom: 0 }}>
+              <button type="button" className="chip" onClick={() => setDialog(null)}>Cancel</button>
+              <button type="button" className="chip primary" disabled={!dialog.all_met && !ack} onClick={confirmGate}>Turn on</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

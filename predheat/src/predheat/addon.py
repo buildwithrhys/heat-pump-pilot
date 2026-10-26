@@ -27,11 +27,8 @@ FRONTEND_DIR = Path("/app/static")
 # comparison, setpoint offset) live in settings.json and the dashboard's Settings
 # tab; values left in options.json by older releases are migrated once at start.
 OPTION_ENV = {
-    "data_mode": "PREDHEAT_DATA_MODE",
     "poll_seconds": "PREDHEAT_HA_POLL_SECONDS",
     "log_level": "PREDHEAT_LOG_LEVEL",
-    "control_enabled": "PREDHEAT_CONTROL_ENABLED",
-    "control_climate_entity": "PREDHEAT_CONTROL_CLIMATE_ENTITY",
 }
 
 
@@ -44,12 +41,12 @@ def env_from_options(
     """Build the environment for the server.
 
     Precedence: add-on options > environment already present > built-in defaults.
-    Control stays impossible unless the add-on option ``control_enabled`` is true
-    AND a climate entity is named. Whether it acts also depends on the operating
-    mode chosen on the dashboard's Settings tab, and the controller re-checks its
-    guards on every cycle (see SAFETY.md).
+    The control gate (allow control, climate entity, operating mode) is held in
+    settings.json and changed only from the dashboard; the controller re-checks
+    its guards on every cycle (see SAFETY.md).
     """
     env: dict[str, str] = {
+        "PREDHEAT_DATA_MODE": "home_assistant",  # the only supported source; PREDHEAT_DEV_SIMULATED=1 overrides for development
         "PREDHEAT_DATA_DIR": str(data_dir),
         "PREDHEAT_DATABASE_URL": f"sqlite:///{data_dir / 'predheat.sqlite'}",
         "PREDHEAT_API_HOST": "0.0.0.0",
@@ -62,17 +59,18 @@ def env_from_options(
         env["PREDHEAT_HA_WS_URL"] = "ws://supervisor/core/websocket"
         env["PREDHEAT_HA_TOKEN"] = supervisor_token
     for key, value in (existing or {}).items():
-        if key.startswith("PREDHEAT_"):
+        if key.startswith("PREDHEAT_") and key != "PREDHEAT_DATA_MODE":
             env[key] = value
+    if (existing or {}).get("PREDHEAT_DEV_SIMULATED") == "1":
+        env["PREDHEAT_DATA_MODE"] = "simulated"
     for key, var in OPTION_ENV.items():
         value = options.get(key)
         if value is None or value == "":
             continue
         env[var] = str(value).lower() if isinstance(value, bool) else str(value)
     env["PREDHEAT_LOG_LEVEL"] = env["PREDHEAT_LOG_LEVEL"].upper()
-    wants_control = str(options.get("control_enabled", "")).lower() == "true"
-    if not (wants_control and options.get("control_climate_entity")):
-        env["PREDHEAT_CONTROL_ENABLED"] = "false"
+    env.pop("PREDHEAT_CONTROL_ENABLED", None)  # the control gate lives in settings.json, never in the environment
+    env.pop("PREDHEAT_CONTROL_CLIMATE_ENTITY", None)
     return env
 
 
@@ -99,7 +97,7 @@ def main() -> None:
         "yes" if "SUPERVISOR_TOKEN" in os.environ else "no",
         data_dir,
     )
-    if env.get("PREDHEAT_DATA_MODE") == "home_assistant" and not env.get("PREDHEAT_HA_TOKEN"):
+    if env["PREDHEAT_DATA_MODE"] == "home_assistant" and not env.get("PREDHEAT_HA_TOKEN"):
         log.error("data_mode is home_assistant but no Home Assistant token is available; "
                   "run as a Supervisor add-on or set PREDHEAT_HA_URL and PREDHEAT_HA_TOKEN")
         raise SystemExit(1)

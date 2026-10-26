@@ -42,7 +42,7 @@ In **shadow** mode each plan is saved. Once its horizon has passed, the model's 
 
 ## Letting PredHeat control the heating
 
-Control is off by default and needs three things: **Allow control** and the **climate entity** for the heating zone on the add-on Configuration tab, and an operating mode of **Balanced** or **Max savings** on the dashboard's Settings tab. If any one is missing, nothing is ever written. The Configuration tab needs a Home Assistant admin and restarts the add-on, which is deliberate: it is the interlock. The mode is a runtime choice you can change at any time, and switching away from a controlling mode hands the setpoint back immediately.
+Control is off by default and needs three things on the Settings tab: **Allow control** on, a **climate entity** chosen, and an operating mode of **Balanced** or **Max savings**. If any one is missing, nothing is ever written. Switching Allow control on shows the four preconditions (seven days in Shadow, heat loss confidence 50% or more, forecast accuracy under 0.5 °C, an entity chosen) and whether each is met; you can go ahead with one unmet by ticking that you understand PredHeat may move the setpoint. Switching it off needs no confirmation and hands the setpoint back on the next cycle. Every change to the gate is written to the control log.
 
 When all three are set, on every collection cycle PredHeat reads the current target temperature of the climate entity and, if the plan says to pre-heat or coast right now, moves it up or down by the configured offset (balanced: the offset; max_savings: one and a half times it, capped at 2 °C). Otherwise it leaves your own setpoint in place. It hands the setpoint back and logs why when:
 
@@ -56,21 +56,20 @@ Every proposal, change, failure and release is written to the control log, and t
 
 ## Settings: where each one lives
 
-**Add-on Configuration tab** (install-time and safety; saving restarts the add-on):
+**Add-on Configuration tab** (saving restarts the add-on):
 
 | Option | Default | Meaning |
 |---|---|---|
-| Data source | `home_assistant` | Live data from this instance, or `simulated` for a synthetic house to explore the dashboard. |
 | Collection interval | 300 s | How often readings, prices and forecasts are refreshed. |
 | Log level | `info` | Use `debug` only while diagnosing a problem. |
-| Allow control | off | The safety interlock. See "Letting PredHeat control the heating". |
-| Climate entity to control | empty | The one entity PredHeat may write to. |
 
-**Settings tab in the dashboard** (apply immediately, no restart, stored in the add-on's data directory):
+**Settings tab in the dashboard** (saves as you change it, applies at once, stored in the add-on's data directory):
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Operating mode | Monitor | Monitor, Shadow, Balanced or Max savings. The controlling modes are greyed out until Allow control and a climate entity are set in the Configuration tab. |
+| Allow control | off | The interlock. A toggle with a confirmation that lists the preconditions. |
+| Climate entity | the myVAILLANT zone when there is one | The heating zone PredHeat may adjust, chosen from a list. |
+| Operating mode | Monitor | Monitor, Shadow, Balanced or Max savings, each explained on its card. The controlling modes light up when Allow control is on. |
 | Maximum setpoint offset | 1.0 °C | How far PredHeat may move your setpoint either way. |
 | Gas unit price, boiler efficiency | 6.24p, 0.85 | For the "same heat on gas" comparison. |
 | Design outdoor temperature | from your region | The outdoor temperature heat loss is quoted at. |
@@ -91,7 +90,8 @@ The database and discovery reports live in the add-on's `/data` directory. It su
 
 - **Not in the sidebar.** Switch on **Show in sidebar** on the add-on page.
 - **"Learning" instead of a heat loss figure.** Fewer than 24 hours of usable indoor, outdoor and heat data so far, or a signal is missing. Check the System health tab.
-- **Hot water or heating signals missing.** Discovery matches entity names from the pilot integrations (myVAILLANT, Octopus Energy, OpenWeatherMap, Solcast, Huawei Solar). The System health tab lists what was found; the mapping override screen is on the roadmap.
+- **A signal mapped to the wrong entity, or missing.** On System health, click Change next to the signal and pick from the candidates PredHeat scored, or go back to automatic. Your choice is kept across restarts and updates.
+- **Whole home import says "Data looks wrong".** The day's import is above a sanity bound. Check which entity feeds grid_import_kwh on System health; `/api/samples?signal=grid_import_kwh` shows the stored readings.
 - **Something else.** Set the log level to `debug`, reproduce, and send the Log tab contents.
 
 ## Installing from a local folder (development)

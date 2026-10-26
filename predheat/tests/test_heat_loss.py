@@ -51,4 +51,4 @@ def test_insufficient_data_is_reported_not_raised(tmp_path):
         est = p.thermal_estimate(s, days=14)
     assert est["status"] in ("waiting", "ok")
     if est["status"] == "waiting":
-        assert "days it usually needs" in est["reason"] and "heat_loss_w_per_k" not in est
+        assert "So far:" in est["reason"] and "heat_loss_w_per_k" not in est and "confidence" not in est["reason"]

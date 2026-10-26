@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, num, type HeatLoss, type HeatPump, type SystemHealth } from "../api";
+import { api, num, type HeatLoss, type HeatPump, type MappingSignal, type MappingView, type SystemHealth } from "../api";
 
 function LearnedModels() {
   const [hl, setHl] = useState<HeatLoss | null>(null);
@@ -35,17 +35,58 @@ function LearnedModels() {
   );
 }
 
+function MappingRow({ x, map, editable, onChange }: { x: SystemHealth["signals"][number]; map?: MappingSignal; editable: boolean; onChange: (m: MappingView) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [choice, setChoice] = useState<string>(x.source ?? "");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const unmapped = x.status === "unavailable";
+  const save = async (entity: string | null) => {
+    setBusy(true); setProblem(null);
+    try { onChange(await api.setMapping(x.signal, entity)); setEditing(false); }
+    catch (e) { setProblem(String((e as Error).message)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <tr>
+      <td title={map?.description ?? ""}>{x.signal}</td>
+      <td><span className={`tag ${x.status === "available" ? (x.stale ? "bad" : "measured") : x.status === "degraded" ? "estimated" : ""}`}>{x.stale ? "stale" : x.status}</span>{map?.overridden ? <span className="tag" title="You chose this entity">yours</span> : null}</td>
+      <td className="muted">{x.quality}</td>
+      <td className="mono muted" title={x.source ?? ""}>
+        {editing ? (
+          <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <select value={choice} onChange={(e) => setChoice(e.target.value)} style={{ height: 32, fontSize: 12 }}>
+              <option value="">(none)</option>
+              {(map?.candidates ?? []).map(([eid, score, note]) => <option key={eid} value={eid}>{eid} · {Math.round(score * 100)}% {note}</option>)}
+              {x.source && !(map?.candidates ?? []).some(([eid]) => eid === x.source) ? <option value={x.source}>{x.source}</option> : null}
+            </select>
+            <button type="button" className="chip primary" style={{ height: 32 }} disabled={busy} onClick={() => save(choice || null)}>Use</button>
+            {map?.overridden && <button type="button" className="chip" style={{ height: 32 }} disabled={busy} onClick={() => save(null)}>Back to automatic</button>}
+            <button type="button" className="chip" style={{ height: 32 }} onClick={() => setEditing(false)}>Cancel</button>
+            {problem && <span className="err" style={{ fontSize: 12 }}>{problem}</span>}
+          </span>
+        ) : (x.source ? x.source.replace(/_/g, "_\u200b") : <span className="muted">none</span>)}
+      </td>
+      <td className="num">{unmapped ? "" : (x.last_text ?? (x.last_value != null ? x.last_value.toFixed(2) : ""))}</td>
+      <td className="num">{unmapped ? "" : (x.age_minutes ?? "")}</td>
+      <td className="muted">{x.notes}</td>
+      <td>{editable && !editing && <button type="button" className="linkish" style={{ fontSize: 12 }} onClick={() => { setChoice(x.source ?? ""); setEditing(true); }}>Change</button>}</td>
+    </tr>
+  );
+}
+
 export default function SystemPage() {
   const [s, setS] = useState<SystemHealth | null>(null);
+  const [mapping, setMapping] = useState<MappingView | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { api.system().then(setS).catch((e) => setErr(String(e))); }, []);
+  useEffect(() => { api.system().then(setS).catch((e) => setErr(String(e))); api.mapping().then(setMapping).catch(() => setMapping(null)); }, []);
   if (err) return <p className="err">{err}</p>;
   if (!s) return <p className="muted">Loading…</p>;
   const avail = s.signals.filter((x) => x.status === "available");
   return (
     <>
       <div className="grid">
-        <div className="card"><h3>Data source</h3><div className="big" style={{ fontSize: "1.2rem" }}>{s.data_mode}</div><div className="sub">operating mode {s.operating_mode}</div></div>
+        <div className="card"><h3>Operating mode</h3><div className="big" style={{ fontSize: "1.2rem" }}>{s.operating_mode}</div><div className="sub">change it on the Settings tab</div></div>
         <div className={`card ${s.control.holding ? "info" : ""}`}><h3>Control</h3><div className="big" style={{ fontSize: "1.2rem" }}>{!s.control.configured ? "Off" : s.control.holding ? `Holding ${s.control.commanded_c} °C` : "Armed"}</div><div className="sub">{s.control.configured ? `${s.control.entity} · ${s.control.last?.reason ?? "waiting for first cycle"}` : s.control.reason} · {s.record_counts.control_actions} log entries</div></div>
         <div className="card"><h3>Signals</h3><div className="big">{avail.length}<span className="muted" style={{ fontSize: "1rem" }}> / {s.signals.length}</span></div><div className="sub">{avail.filter((x) => x.stale).length} stale</div></div>
         <div className="card"><h3>Stored</h3><div className="big">{s.record_counts.measurements.toLocaleString()}</div><div className="sub">measurements · {s.record_counts.rate_intervals} rate slots · {s.record_counts.dispatches} dispatches</div></div>
@@ -105,17 +146,9 @@ export default function SystemPage() {
       <div className="section">
         <h2>Signal mapping and freshness</h2>
         <div className="tablewrap"><table>
-          <thead><tr><th>Signal</th><th>Status</th><th>Quality</th><th>Source</th><th className="num">Last value</th><th className="num">Age (min)</th><th>Notes</th></tr></thead>
+          <thead><tr><th>Signal</th><th>Status</th><th>Quality</th><th>Source</th><th className="num">Last value</th><th className="num">Age (min)</th><th>Notes</th><th></th></tr></thead>
           <tbody>{s.signals.map((x) => (
-            <tr key={x.signal}>
-              <td>{x.signal}</td>
-              <td><span className={`tag ${x.status === "available" ? (x.stale ? "bad" : "measured") : x.status === "degraded" ? "estimated" : ""}`}>{x.stale ? "stale" : x.status}</span></td>
-              <td className="muted">{x.quality}</td>
-              <td className="mono muted" title={x.source ?? ""}>{x.source ? x.source.replace(/_/g, "_\u200b") : ""}</td>
-              <td className="num">{x.last_text ?? (x.last_value != null ? x.last_value.toFixed(2) : "")}</td>
-              <td className="num">{x.age_minutes ?? ""}</td>
-              <td className="muted">{x.notes}</td>
-            </tr>
+            <MappingRow key={x.signal} x={x} map={mapping?.signals.find((m) => m.signal === x.signal)} editable={!!mapping?.editable} onChange={setMapping} />
           ))}</tbody>
         </table></div>
       </div>

@@ -153,3 +153,18 @@ select, button.chip { font: inherit; font-size: 14px; font-weight: 500; height: 
 select:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; border-color: var(--ring); }
 .tablewrap { overflow-x: auto; }
 @media (max-width: 600px) { .card .big { font-size: 24px; line-height: 30px; } .shell { padding: 14px 12px 32px; } nav.tabs button { padding: 0 12px; } }
+
+.switch { position: relative; display: inline-block; width: 44px; height: 24px; border-radius: 999px; background: var(--axis); transition: background 0.15s; cursor: pointer; flex: none; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left 0.15s; }
+.switch.on { background: var(--primary-fill); }
+.switch.on::after { left: 23px; }
+.switch:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.card.radio.active { border-color: var(--primary-fill); background: rgba(34, 211, 238, 0.05); }
+.card.radio:hover:not(:disabled) { border-color: var(--ring); }
+button.chip { cursor: pointer; }
+button.chip.primary { background: var(--primary-fill); color: var(--primary-deep); border-color: var(--primary-fill); }
+button.chip:disabled { opacity: 0.5; cursor: not-allowed; }
+button.linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--primary); text-decoration: underline; cursor: pointer; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(15, 17, 23, 0.45); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+.modal { background: var(--background); border: 1px solid var(--border); border-radius: 12px; padding: 20px; max-width: 560px; width: 100%; }
+.sources-line { font-size: 12px; color: var(--muted); margin: -4px 0 10px; }

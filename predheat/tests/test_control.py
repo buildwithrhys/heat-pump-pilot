@@ -103,9 +103,9 @@ def test_low_confidence_and_cold_house_block(tmp_path):
 
 def test_platform_runs_controller_in_poll_and_releases_on_demand(tmp_path):
     settings = Settings(data_mode=DataMode.SIMULATED, operating_mode=OperatingMode.BALANCED, control_enabled=True,
-                        control_climate_entity="climate.sim", database_url=f"sqlite:///{tmp_path / 'p.sqlite'}", sim_days=10, sim_seed=4)
+                        control_climate_entity="climate.sim", database_url=f"sqlite:///{tmp_path / 'p.sqlite'}", sim_days=10, sim_seed=4, data_dir=tmp_path)
     p = build_platform(settings)
-    assert p.controller is not None
+    assert p.controller is not None and p.settings.control_enabled and p.settings.operating_mode == OperatingMode.BALANCED
     asyncio.run(p.bootstrap())
     r = asyncio.run(p.poll_once())
     assert "control" in r
@@ -115,9 +115,9 @@ def test_platform_runs_controller_in_poll_and_releases_on_demand(tmp_path):
     assert not p.controller.holding
 
 
-def test_addon_forces_control_off_without_entity():
+def test_addon_env_never_carries_the_gate():
     from predheat.addon import env_from_options
 
-    assert env_from_options({"control_enabled": True}, None)["PREDHEAT_CONTROL_ENABLED"] == "false"
-    env = env_from_options({"control_enabled": True, "control_climate_entity": "climate.x"}, None)
-    assert env["PREDHEAT_CONTROL_ENABLED"] == "true" and env["PREDHEAT_CONTROL_CLIMATE_ENTITY"] == "climate.x"
+    env = env_from_options({"control_enabled": True, "control_climate_entity": "climate.x"}, None, existing={"PREDHEAT_CONTROL_ENABLED": "true"})
+    assert "PREDHEAT_CONTROL_ENABLED" not in env and "PREDHEAT_CONTROL_CLIMATE_ENTITY" not in env
+    assert env_from_options({}, None, existing={"PREDHEAT_DEV_SIMULATED": "1"})["PREDHEAT_DATA_MODE"] == "simulated"

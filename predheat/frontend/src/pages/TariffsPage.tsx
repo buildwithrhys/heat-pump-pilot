@@ -8,6 +8,7 @@ export default function TariffsPage() {
   useEffect(() => { setT(null); api.tariffs(days).then(setT).catch((e) => setErr(String(e))); }, [days]);
   if (err) return <p className="err">{err}</p>;
   if (!t) return <p className="muted">Loading…</p>;
+  if (t.status === "implausible") return <div className="note urgent">{t.reason}</div>;
   if (t.status !== "ok") return <p className="muted">{t.reason}</p>;
   const best = t.results.find((r) => r.replayable);
   return (

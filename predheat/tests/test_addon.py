@@ -21,8 +21,7 @@ def test_supervisor_env_is_derived_from_token():
 
 
 def test_options_map_to_env_and_override_existing():
-    options = {"data_mode": "home_assistant", "poll_seconds": 120, "log_level": "debug",
-               "latitude": 51.5, "control_climate_entity": ""}
+    options = {"poll_seconds": 120, "log_level": "debug", "latitude": 51.5, "control_climate_entity": ""}
     env = env_from_options(options, "tok", Path("/data"), existing={"PREDHEAT_HA_POLL_SECONDS": "900", "HOME": "/root"})
     assert env["PREDHEAT_DATA_MODE"] == "home_assistant"
     assert env["PREDHEAT_HA_POLL_SECONDS"] == "120"  # option beats existing env
@@ -34,7 +33,7 @@ def test_options_map_to_env_and_override_existing():
 
 def test_control_is_off_unless_explicitly_configured():
     env = env_from_options({}, None, Path("/data"), existing={"PREDHEAT_CONTROL_ENABLED": "true"})
-    assert env["PREDHEAT_CONTROL_ENABLED"] == "false"  # environment alone cannot switch it on
+    assert "PREDHEAT_CONTROL_ENABLED" not in env  # the environment cannot switch it on
     assert "PREDHEAT_HA_TOKEN" not in env  # no supervisor, nothing invented
 
 

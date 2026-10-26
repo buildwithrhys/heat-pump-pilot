@@ -28,6 +28,9 @@ export interface Reading {
   value: number | null;
   text: string | null;
   ts: string;
+  confirmed_at?: string;
+  age_minutes?: number;
+  stale_after_minutes?: number;
   quality: string;
   stale: boolean;
 }
@@ -60,7 +63,7 @@ export interface Costs {
   auxiliary: CostBlock;
   standby: CostBlock;
   heat_pump_total: { kwh_electric: number; cost_pence: number };
-  whole_home_import: { kwh: number; cost_pence: number; quality: string; prices_complete: boolean };
+  whole_home_import: { kwh: number; cost_pence: number; quality: string; prices_complete: boolean; source?: string; plausible?: boolean; limit_kwh?: number };
   standing_charge_pence: number;
   reconciliation: { reconciled: boolean; worst_difference_kwh: number; slots: number };
 }
@@ -216,7 +219,7 @@ export interface TariffResult {
 }
 
 export interface TariffComparison {
-  status: "ok" | "no_data";
+  status: "ok" | "no_data" | "implausible";
   reason?: string;
   days: number;
   period?: { start: string; end: string };
@@ -243,8 +246,14 @@ export interface ControlStatus {
   mode?: string;
 }
 
+export interface ClimateEntity { entity_id: string; name: string; platform: string | null; state: string; current_temperature: number | null; target: number | null }
+export interface Precondition { key: string; label: string; met: boolean; detail: string }
+export interface Preconditions { checks: Precondition[]; all_met: boolean; max_offset_c: number }
+
 export interface SettingsField {
-  type: "enum" | "number";
+  type: "enum" | "number" | "bool" | "entity";
+  group?: "control" | "comparisons" | "advanced";
+  lines?: Record<string, string>;
   default: number | string | null;
   optional?: boolean;
   choices?: string[];
@@ -258,11 +267,29 @@ export interface SettingsField {
 }
 
 export interface SettingsDoc {
-  values: Record<string, number | string | null>;
+  values: Record<string, number | string | boolean | null>;
   fields: Record<string, SettingsField>;
   gate: { allow_control: boolean; climate_entity: string | null; control_possible: boolean; message: string | null };
-  effective: { operating_mode: string; control_enabled: boolean; climate_entity: string | null; data_mode: string };
+  effective: { operating_mode: string; control_enabled: boolean; climate_entity: string | null };
 }
+
+export interface MappingSignal {
+  signal: string;
+  description: string;
+  unit: string;
+  source: string | null;
+  status: string;
+  confidence: number;
+  notes: string;
+  overridden: boolean;
+  candidates: [string, number, string][];
+}
+
+export interface MappingView { editable: boolean; signals: MappingSignal[] }
+
+/** Switch the dashboard tab from anywhere (the App listens). */
+export const goToTab = (tab: string) => { try { localStorage.setItem("predheat.tab", tab); } catch { /* ignore */ } window.dispatchEvent(new CustomEvent("predheat:tab", { detail: tab })); };
+export const announceMode = (mode: string, control: boolean) => window.dispatchEvent(new CustomEvent("predheat:mode", { detail: { mode, control } }));
 
 export const MODE_LABEL: Record<string, string> = { monitor: "Monitor mode", shadow: "Shadow mode", balanced: "Balanced", max_savings: "Max savings" };
 
@@ -289,10 +316,14 @@ export interface Overview {
 
 export interface DailyRow {
   date: string;
+  period_start?: string;
+  period_end?: string;
+  label?: string;
+  days?: number;
   space_heating: CostBlock;
   hot_water: CostBlock;
   heat_pump_total: { kwh_electric: number; cost_pence: number };
-  whole_home_import: { kwh: number; cost_pence: number };
+  whole_home_import: { kwh: number; cost_pence: number; plausible?: boolean };
   standing_charge_pence: number;
   gas_equivalent: GasEquivalent;
 }
@@ -325,7 +356,16 @@ export interface SystemHealth {
 
 export const api = {
   overview: () => get<Overview>("/api/overview"),
-  costs: (days: number) => get<{ summary: Costs; daily: DailyRow[] }>(`/api/costs?days=${days}`),
+  costs: (q: { days?: number; start?: string; end?: string; group?: "day" | "week" | "month" }) => {
+    const qs = Object.entries(q).filter(([, v]) => v != null && v !== "").map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join("&");
+    return get<{ summary: Costs; daily: DailyRow[]; group: string; period: { start: string; end: string } }>(`/api/costs?${qs}`);
+  },
+  costsCsvUrl: (q: { days?: number; start?: string; end?: string; group?: string }) => {
+    const qs = Object.entries(q).filter(([, v]) => v != null && v !== "").map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join("&");
+    return url(`/api/costs.csv?${qs}`);
+  },
+  mapping: () => get<MappingView>("/api/mapping"),
+  setMapping: (signal: string, entityId: string | null) => send<MappingView>("PUT", `/api/mapping/${signal}`, { entity_id: entityId ?? "" }),
   timeline: (hours = 48) => get<Timeline>(`/api/timeline?hours=${hours}`),
   system: () => get<SystemHealth>("/api/system"),
   heatLoss: (days = 14) => get<HeatLoss>(`/api/heat-loss?days=${days}`),
@@ -334,7 +374,9 @@ export const api = {
   tariffs: (days = 30) => get<TariffComparison>(`/api/tariffs?days=${days}`),
   controlStatus: () => get<ControlStatus>("/api/control-status"),
   settings: () => get<SettingsDoc>("/api/settings"),
-  saveSettings: (changes: Record<string, number | string | null>) => send<SettingsDoc>("PUT", "/api/settings", changes),
+  saveSettings: (changes: Record<string, number | string | boolean | null>) => send<SettingsDoc>("PUT", "/api/settings", changes),
+  preconditions: () => get<Preconditions>("/api/control-preconditions"),
+  climateEntities: () => get<{ entities: ClimateEntity[]; suggested: string | null }>("/api/climate-entities"),
   resetSetting: (key?: string) => send<SettingsDoc>("POST", `/api/settings/reset${key ? `?key=${key}` : ""}`),
 };
 

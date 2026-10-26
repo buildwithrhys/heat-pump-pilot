@@ -32,14 +32,43 @@ class EnergyInterval:
     notes: list[str] = field(default_factory=list)
 
 
+MAX_RATE_KWH_PER_H = 25.0  # a domestic single-phase supply cannot exceed about 23 kW
+
+
 def counter_to_intervals(
     readings: list[Measurement],
     category: str,
     slot: timedelta = SLOT,
     max_gap: timedelta = timedelta(hours=3),
     resolution_downgrade: bool = True,
+    max_rate_kwh_per_h: float = MAX_RATE_KWH_PER_H,
 ) -> list[EnergyInterval]:
-    """Convert cumulative counter readings into half-hour energy intervals."""
+    """Convert cumulative counter readings into half-hour energy intervals.
+
+    Readings from different sources for the same signal are differenced
+    separately, so a re-based or restated series can never be subtracted from
+    another. A rise faster than ``max_rate_kwh_per_h`` is a discontinuity (a
+    re-stated reading, a baseline change) and contributes nothing, flagged.
+    """
+    by_source: dict[str | None, list[Measurement]] = {}
+    for m in readings:
+        by_source.setdefault(m.source_ref, []).append(m)
+    if len(by_source) > 1:
+        # Difference each source on its own, then take each slot from the preferred source
+        # (live readings over statistics, else the one with most readings). Mixing baselines
+        # is what turned a 54,000 kWh meter register into a day's consumption.
+        def rank(src: str | None) -> tuple[int, int]:
+            return (0 if src and src.endswith("#statistics") else 1, len(by_source[src]))
+
+        ordered = sorted(by_source, key=rank, reverse=True)
+        merged: dict[datetime, EnergyInterval] = {}
+        for src in ordered:
+            for iv in counter_to_intervals(by_source[src], category, slot, max_gap, resolution_downgrade, max_rate_kwh_per_h):
+                if iv.start not in merged:
+                    if src and src.endswith("#statistics"):
+                        iv.notes.append("from_statistics")
+                    merged[iv.start] = iv
+        return sorted(merged.values(), key=lambda b: b.start)
     pts = sorted({(m.ts, m.value) for m in readings if m.value is not None})
     if len(pts) < 2:
         return []
@@ -66,6 +95,9 @@ def counter_to_intervals(
             else:
                 delta = 0.0  # non-monotonic glitch: ignore rather than invent energy
                 notes.append("non_monotonic_ignored")
+        if delta > max_rate_kwh_per_h * max(gap.total_seconds() / 3600.0, 1.0 / 60.0):
+            delta = 0.0  # physically impossible rise: a re-based or restated reading, not energy
+            notes.append("jump_ignored")
         if gap > max_gap:
             notes.append(f"gap_{int(gap.total_seconds() // 60)}min")
         # Spread uniformly across [t0, t1)

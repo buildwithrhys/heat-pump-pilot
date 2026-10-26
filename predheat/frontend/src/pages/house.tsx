@@ -43,17 +43,19 @@ export function YourHouse({ hl, hp }: { hl: HeatLoss; hp: HeatPump }) {
       ) : null}
       <Efficiency e={hp.heating} lookback={hp.lookback_days} why={hp.why_differs} />
       <Efficiency e={hp.hot_water} lookback={hp.lookback_days} why={hp.why_differs} />
-      <div className="card">
-        <h3>Based on<Info text="Half-hour readings where indoor temperature, outdoor temperature and heat delivered were all present." /></h3>
-        <div className="big" style={{ fontSize: "1.1rem" }}>{hl.samples.toLocaleString("en-GB")} half-hour readings</div>
-        <div className="sub">over {hl.days_with_data} {hl.days_with_data === 1 ? "day" : "days"} (looks back {hl.lookback_days} days){hl.outdoor_range_c ? ` · ${hl.outdoor_range_c[0]} to ${hl.outdoor_range_c[1]} °C outside` : ""} · heating ran {num(hl.heating_hours, 0, " h")}</div>
-      </div>
+      {ok && (
+        <div className="card">
+          <h3>Based on<Info text={`Half-hour readings where indoor temperature, outdoor temperature and heat delivered were all present. Heating ran ${num(hl.heating_hours, 0)} hours in the window.`} /></h3>
+          <div className="big" style={{ fontSize: "1.1rem" }}>{hl.samples.toLocaleString("en-GB")} half-hour readings</div>
+          <div className="sub">over {hl.days_with_data} {hl.days_with_data === 1 ? "day" : "days"} (looks back {hl.lookback_days} days){hl.outdoor_range_c ? `, ${hl.outdoor_range_c[0]} to ${hl.outdoor_range_c[1]} °C outside` : ""}</div>
+        </div>
+      )}
     </div>
   );
 }
 
 function Efficiency({ e, lookback, why }: { e: EndUseEfficiency; lookback: number; why: string }) {
-  const tip = `COP (coefficient of performance): kWh of heat delivered per kWh of electricity used, from the controller's own energy counters. ${why}`;
+  const tip = `COP (coefficient of performance): kWh of heat delivered per kWh of electricity used, from the controller's own energy counters. ${e.running_hours} running hours over ${e.days_with_data} days; looks back ${lookback} days.`;
   if (e.status !== "ok" || e.observed_cop == null) {
     return <Waiting title={`${e.label} efficiency`} reason={e.reason} tip={tip} />;
   }
@@ -62,9 +64,11 @@ function Efficiency({ e, lookback, why }: { e: EndUseEfficiency; lookback: numbe
       <h3>{e.label} efficiency<Info text={tip} /></h3>
       <div className="big">{num(e.observed_cop, 1)}</div>
       <div className="sub">
-        average COP over the last {e.days_with_data} {e.days_with_data === 1 ? "day" : "days"} (looks back {lookback}){e.outdoor_range_c ? `, ${e.outdoor_range_c[0]} to ${e.outdoor_range_c[1]} °C outside` : ""}
-        {e.cop_at_7 != null ? ` · about ${num(e.cop_at_7, 1)} at 7 °C` : e.normalised_note ? ` · ${e.normalised_note}` : ""}
+        average COP, {e.label.toLowerCase()}, last {e.days_with_data} {e.days_with_data === 1 ? "day" : "days"}{e.outdoor_range_c ? `, ${e.outdoor_range_c[0]} to ${e.outdoor_range_c[1]} °C outside` : ""}
+        {e.cop_at_7 != null ? <><br />Estimated {num(e.cop_at_7, 1)} at 7 °C outside (the standard comparison point)</> : null}
+        {e.cop_at_minus_2 != null ? <><br />Estimated {num(e.cop_at_minus_2, 1)} at −2 °C outside</> : null}
       </div>
+      <div className="sub" style={{ marginTop: 6 }}>{why}</div>
     </div>
   );
 }

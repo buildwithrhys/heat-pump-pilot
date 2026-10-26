@@ -1,5 +1,5 @@
 name: PredHeat
-version: "0.2.2"
+version: "0.2.3"
 slug: predheat
 description: Self-learning heat pump and home energy optimiser.
 url: https://github.com/buildwithrhys/predheat
@@ -21,13 +21,8 @@ ports:
 ports_description:
   8750/tcp: Direct access to the API and dashboard. Optional, the sidebar panel uses ingress.
 options:
-  data_mode: home_assistant
   poll_seconds: 300
   log_level: info
-  control_enabled: false
 schema:
-  data_mode: list(home_assistant|simulated)
-  poll_seconds: int(60,3600)
-  log_level: list(debug|info|warning|error)
-  control_enabled: bool
-  control_climate_entity: str?
+  poll_seconds: int(60,3600)?
+  log_level: list(debug|info|warning|error)?

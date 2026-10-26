@@ -15,7 +15,14 @@ export default function App() {
     try { return (localStorage.getItem("predheat.tab") as Tab) || "Overview"; } catch { return "Overview"; }
   });
   const [meta, setMeta] = useState<Pick<Overview, "data_mode" | "operating_mode" | "control_enabled"> | null>(null);
-  useEffect(() => { api.overview().then((o) => setMeta(o)).catch(() => setMeta(null)); }, []);
+  useEffect(() => {
+    api.overview().then((o) => setMeta(o)).catch(() => setMeta(null));
+    const onTab = (e: Event) => setTab((e as CustomEvent<string>).detail as Tab);
+    const onMode = (e: Event) => { const d = (e as CustomEvent<{ mode: string; control: boolean }>).detail; setMeta((m) => (m ? { ...m, operating_mode: d.mode, control_enabled: d.control } : m)); };
+    window.addEventListener("predheat:tab", onTab);
+    window.addEventListener("predheat:mode", onMode);
+    return () => { window.removeEventListener("predheat:tab", onTab); window.removeEventListener("predheat:mode", onMode); };
+  }, []);
   const pick = (t: Tab) => { setTab(t); try { localStorage.setItem("predheat.tab", t); } catch { /* ignore */ } };
 
   return (

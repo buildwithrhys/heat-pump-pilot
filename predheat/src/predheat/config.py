@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     ha_ws_url: str | None = None
     ha_token: SecretStr | None = None
     ha_poll_seconds: int = 300
+    backfill_days: int = 60  # how far back to pull long-term statistics on first start
 
     # Direct provider credentials (optional; the HA integrations are the PoC source)
     octopus_api_key: SecretStr | None = None
