@@ -165,6 +165,7 @@ export default function SystemPage() {
 
       <div className="section">
         <h2>Recent data quality events<Term k="events" /></h2>
+        <p className="muted" style={{ fontSize: 13 }}><a className="chip" style={{ display: "inline-flex", alignItems: "center", textDecoration: "none", marginRight: 8 }} href={api.diagnosticsUrl(30)} download>Download diagnostics</a>Raw readings, the half-hourly figures derived from them, anything discarded and why, and daily totals for the last 30 days. Useful when a figure looks wrong.</p>
         {s.recent_events.length === 0 ? <p className="muted">None.</p> : (
           <div className="tablewrap"><table>
             <thead><tr><th>Time</th><th>Severity</th><th>Source</th><th>Message</th></tr></thead>

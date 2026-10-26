@@ -126,12 +126,15 @@ def classify_slots(
     family: str = "intelligent_go",
     off_peak_rate: float | None = None,
     peak_rate: float | None = None,
+    now: datetime | None = None,
 ) -> list[SlotPrice]:
     """Classify each half-hour slot in [start, end) for an IOG-style tariff.
 
     Confirmed dispatches (started or completed) qualify for the off-peak rate.
     Planned dispatches are reported as planned and *assumed*: callers must not
-    treat them as savings until they are confirmed.
+    treat them as savings until they are confirmed. With ``now``, a future slot the
+    integration has already re-priced as intelligent-adjusted, without a started or
+    completed dispatch behind it, is also planned rather than confirmed.
     """
     dispatches = dispatches or []
     confirmed = [(d.start, d.end) for d in dispatches if d.kind in (DispatchKind.COMPLETED, DispatchKind.STARTED)]
@@ -156,14 +159,33 @@ def classify_slots(
         elif any(overlap_seconds(s, e, ds, de) > 0 for ds, de in planned):
             out.append(SlotPrice(s, e, off_peak_rate if off_peak_rate is not None else float("nan"), PriceClass.PLANNED_DISPATCH, assumed=True))
         elif r is not None:
-            cls = PriceClass.CONFIRMED_DISPATCH if r.is_intelligent_adjusted else PriceClass.PEAK
-            out.append(SlotPrice(s, e, r.rate_p_per_kwh, cls))
+            if r.is_intelligent_adjusted and now is not None and s >= now:
+                out.append(SlotPrice(s, e, r.rate_p_per_kwh, PriceClass.PLANNED_DISPATCH, assumed=True))
+            else:
+                cls = PriceClass.CONFIRMED_DISPATCH if r.is_intelligent_adjusted else PriceClass.PEAK
+                out.append(SlotPrice(s, e, r.rate_p_per_kwh, cls))
         elif peak_rate is not None:
             # Beyond the published rate card: project the tariff's fixed structure and
             # mark the price as assumed so forecasts show it as such.
             out.append(SlotPrice(s, e, peak_rate, PriceClass.PEAK, assumed=True))
         else:
             out.append(SlotPrice(s, e, float("nan"), PriceClass.UNKNOWN))
+    return out
+
+
+def planning_prices(slots: list[SlotPrice]) -> list[SlotPrice]:
+    """The prices a plan may rely on: a planned (unconfirmed) dispatch is priced at the
+    standard rate, because the cheap rate only applies if the dispatch actually happens."""
+    import dataclasses
+
+    firm = [s.rate_p_per_kwh for s in slots if not s.assumed and s.rate_p_per_kwh == s.rate_p_per_kwh]
+    peak = max(firm) if firm else None
+    out = []
+    for s in slots:
+        if s.price_class == PriceClass.PLANNED_DISPATCH and peak is not None:
+            out.append(dataclasses.replace(s, rate_p_per_kwh=peak, price_class=PriceClass.PEAK, assumed=True))
+        else:
+            out.append(s)
     return out
 
 

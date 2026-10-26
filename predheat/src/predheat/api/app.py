@@ -242,6 +242,23 @@ def create_app(settings: Settings | None = None, platform: Platform | None = Non
             rows = repo_samples(s, p.property_id, signal, now - timedelta(hours=hours), now)
         return {"signal": signal, "hours": hours, "count": len(rows), "samples": rows}
 
+    @app.get("/api/diagnostics/report")
+    async def diagnostics(days: int = Query(30, ge=1, le=90), raw_days: int = Query(3, ge=1, le=14), download: bool = Query(False)):
+        """Raw stored readings, derived half-hours (this release and 0.3.0), discards, daily totals."""
+        p = plat()
+        from ..db import session_scope
+
+        with session_scope(p.settings.database_url) as s:
+            rep = p.diagnostics_report(s, days=days, raw_days=raw_days)
+        if download:
+            import json as _json
+
+            from fastapi.responses import Response
+
+            return Response(_json.dumps(rep, indent=1, default=str), media_type="application/json",
+                            headers={"Content-Disposition": f'attachment; filename="predheat-diagnostics-{rep["generated_at"][:10]}.json"'})
+        return rep
+
     @app.get("/api/mapping")
     async def mapping():
         p = plat()

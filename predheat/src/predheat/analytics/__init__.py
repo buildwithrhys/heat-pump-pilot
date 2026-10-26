@@ -1,8 +1,11 @@
 from .energy_accounting import (
-    counter_to_intervals,
-    allocate_heat_pump_categories,
-    reconcile,
+    COUNTER_PROFILES,
+    CounterProfile,
     EnergyInterval,
+    allocate_heat_pump_categories,
+    counter_to_intervals,
+    energy_balance,
+    reconcile,
 )
 
-__all__ = ["counter_to_intervals", "allocate_heat_pump_categories", "reconcile", "EnergyInterval"]
+__all__ = ["COUNTER_PROFILES", "CounterProfile", "EnergyInterval", "allocate_heat_pump_categories", "counter_to_intervals", "energy_balance", "reconcile"]

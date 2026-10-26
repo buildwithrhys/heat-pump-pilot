@@ -44,7 +44,7 @@ export default function CostsPage() {
   if (err) return <p className="err">{err}</p>;
   if (!data) return <p className="muted">Loading…</p>;
   const s = data.summary;
-  const rows = data.daily.map((d) => ({
+  const rows = data.daily.filter((d) => d.has_data !== false).map((d) => ({
     date: ukDate(d.date),
     heating: +(d.space_heating.cost_pence / 100).toFixed(2),
     hotwater: +(d.hot_water.cost_pence / 100).toFixed(2),
@@ -73,9 +73,15 @@ export default function CostsPage() {
         <span className="muted">Tariff {s.tariff_code ?? "unknown"}</span>
       </div>
       <p className="sources-line">Heat pump energy figures are Vaillant's own estimates, not metered readings, and arrive one to two hours late<Term k="vaillant_estimate" />. Whole home import is {s.whole_home_import.source === "smart_meter_half_hourly" ? "half-hourly smart meter data" : "from the Octopus meter reading"}<Term k="metered" />. <button type="button" className="linkish" onClick={() => goToTab("System health")}>Data quality by signal</button></p>
+      {s.coverage && s.coverage.days_with_data < s.coverage.days && (
+        <p className="sources-line">Data for {s.coverage.days_with_data} of {s.coverage.days} days{s.coverage.first_day_with_data ? `, from ${ukDate(s.coverage.first_day_with_data)}` : ""}. Totals and averages cover those days only.<Term k="no_data_day" /></p>
+      )}
+      {(s.space_heating.balance?.days_flagged.length ?? 0) > 0 && (
+        <p className="sources-line">Efficiency and heat figures leave out {s.space_heating.balance!.days_flagged.length} {s.space_heating.balance!.days_flagged.length === 1 ? "day" : "days"} whose heat pump figures do not add up ({s.space_heating.balance!.days_flagged.map((f) => ukDate(f.date)).join(", ")}).<Term k="balance_check" /></p>
+      )}
       <div className="grid">
-        <div className="card"><h3>Space heating</h3><div className="big">{pounds(s.space_heating.cost_pence)}</div><div className="sub">{num(s.space_heating.kwh_electric, 1, " kWh")} of electricity became {num(s.space_heating.kwh_heat, 1, " kWh")} of heat · COP {num(s.space_heating.cop, 2)}<Term k="cop" /></div></div>
-        <div className="card"><h3>Hot water</h3><div className="big">{pounds(s.hot_water.cost_pence)}</div><div className="sub">{num(s.hot_water.kwh_electric, 1, " kWh")} of electricity became {num(s.hot_water.kwh_heat, 1, " kWh")} of heat · COP {num(s.hot_water.cop, 2)}<Term k="cop" /></div></div>
+        <div className="card"><h3>Space heating</h3><div className="big">{pounds(s.space_heating.cost_pence)}</div><div className="sub">{num(s.space_heating.kwh_electric, 1, " kWh")} of electricity became {num(s.space_heating.kwh_heat, 1, " kWh")} of heat · {s.space_heating.cop != null ? <>COP {num(s.space_heating.cop, 2)}</> : "efficiency not shown: figures do not add up"}<Term k={s.space_heating.cop != null ? "cop" : "balance_check"} /></div></div>
+        <div className="card"><h3>Hot water</h3><div className="big">{pounds(s.hot_water.cost_pence)}</div><div className="sub">{num(s.hot_water.kwh_electric, 1, " kWh")} of electricity became {num(s.hot_water.kwh_heat, 1, " kWh")} of heat · {s.hot_water.cop != null ? <>COP {num(s.hot_water.cop, 2)}</> : "efficiency not shown: figures do not add up"}<Term k={s.hot_water.cop != null ? "cop" : "balance_check"} /></div></div>
         <div className="card"><h3>Heat pump total</h3><div className="big">{pounds(s.heat_pump_total.cost_pence)}</div><div className="sub">{num(s.heat_pump_total.kwh_electric, 1, " kWh")} including backup heater {num(s.auxiliary.kwh_electric, 2, " kWh")} and standby {num(s.standby.kwh_electric, 2, " kWh")}<span className="tag" title={tip("modelled")}>standby modelled</span></div></div>
         <div className="card"><h3>Cost of heat<Term k="useful_heat_cost" /></h3><div className="big">{s.space_heating.pence_per_kwh_heat != null ? `${s.space_heating.pence_per_kwh_heat.toFixed(1)}p` : "–"}</div><div className="sub">per kWh of heat into the house, space heating; hot water {s.hot_water.pence_per_kwh_heat != null ? `${s.hot_water.pence_per_kwh_heat.toFixed(1)}p` : "–"}</div></div>
         {s.whole_home_import.plausible === false ? (
@@ -111,9 +117,14 @@ export default function CostsPage() {
         <table>
           <thead><tr><th>Period</th><th className="num">Electricity used (kWh)<Term k="kwh" /></th><th className="num">Heat delivered (kWh)</th><th className="num">COP<Term k="cop" /></th><th className="num">Heating £</th><th className="num">Hot water £</th><th className="num">Heat pump total £</th><th className="num">Home import £<Term k="metered" /></th></tr></thead>
           <tbody>
-            {data.daily.map((d) => (
+            {data.daily.map((d) => d.has_data === false ? (
               <tr key={d.date}>
-                <td style={{ whiteSpace: "nowrap" }}>{d.label && d.days && d.days > 1 ? `${d.label} (${d.days} days)` : ukDate(d.date)}{d.space_heating.prices_complete === false && (d.space_heating.kwh_electric > 0) ? <span className="tag bad">prices missing</span> : null}</td>
+                <td style={{ whiteSpace: "nowrap" }}>{d.label && d.days != null && (d.days + (d.days_without_data ?? 0)) > 1 ? d.label : ukDate(d.date)}</td>
+                <td colSpan={7} className="muted" title={tip("no_data_day")}>no data</td>
+              </tr>
+            ) : (
+              <tr key={d.date}>
+                <td style={{ whiteSpace: "nowrap" }}>{d.label && d.days && (d.days + (d.days_without_data ?? 0)) > 1 ? `${d.label} (${d.days} ${d.days === 1 ? "day" : "days"} with data)` : ukDate(d.date)}{d.space_heating.prices_complete === false && (d.space_heating.kwh_electric > 0) ? <span className="tag bad" title={tip("prices_incomplete")}>some prices missing</span> : null}{d.space_heating.balance && d.space_heating.balance.status !== "ok" && d.space_heating.kwh_electric > 0.2 ? <span className="tag" title={tip("balance_check")}>figures do not add up</span> : null}</td>
                 <td className="num">{dash(d.space_heating.kwh_electric, (v) => num(v, 1), hasData(d))}</td>
                 <td className="num">{dash(d.space_heating.kwh_heat, (v) => num(v, 1), hasData(d))}</td>
                 <td className="num">{num(d.space_heating.cop, 2)}</td>

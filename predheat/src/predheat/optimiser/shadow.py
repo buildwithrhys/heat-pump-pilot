@@ -43,6 +43,7 @@ class PlanAction:
     rate_p: float | None
     reason: str
     saving_p_per_kwh: float | None = None
+    saving_basis: str | None = None  # vs_dear_period | vs_average
 
     def as_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -95,7 +96,9 @@ def build_shadow_plan(
 ) -> dict[str, Any]:
     """Return the plan as a JSON-friendly dict. See module docstring for the rules."""
     horizon_end = now + timedelta(hours=horizon_hours)
-    priced = [s for s in slots if not math.isnan(s.rate_p_per_kwh) and s.end > now and s.start < horizon_end]
+    from ..pricing import planning_prices
+
+    priced = [s for s in planning_prices(slots) if not math.isnan(s.rate_p_per_kwh) and s.end > now and s.start < horizon_end]
     assumptions = [
         "Rule-based plan: the learned house model is not in use yet.",
         "Setpoint changes of about 1 °C are assumed. This is what PredHeat would do; it only acts if control is switched on.",
@@ -120,7 +123,8 @@ def build_shadow_plan(
     dear_cut = hi - 0.25 * spread
 
     def is_cheap(s: SlotPrice) -> bool:
-        return s.price_class in CHEAP_CLASSES or s.rate_p_per_kwh <= cheap_cut
+        # only prices that are certain: the fixed cheap hours, confirmed dispatches, or published low rates
+        return s.price_class in CHEAP_CLASSES or (not s.assumed and s.rate_p_per_kwh <= cheap_cut)
 
     def is_dear(s: SlotPrice) -> bool:
         return not is_cheap(s) and s.rate_p_per_kwh >= dear_cut
@@ -143,7 +147,7 @@ def build_shadow_plan(
             f"Cheapest electricity of the day at {rate:.1f} p/kWh ({_hhmm(w[0].start)} to {_hhmm(w[-1].end)}). "
             "Reheat the cylinder at the end of the window so it is hot for the morning with the least standing loss."
             + tank,
-            saving_p_per_kwh=round(mean_rate - rate, 2),
+            saving_p_per_kwh=round(mean_rate - rate, 2), saving_basis="vs_average",
         ))
         reserved.update(s.start for s in dhw)
 
@@ -185,13 +189,12 @@ def build_shadow_plan(
             f"Raise the room setpoint by about 1 °C ahead of the {_hhmm(w_start)} to {_hhmm(w_end)} expensive period "
             f"({w_rate:.1f} p/kWh), using cheaper electricity at {p_rate:.1f} p/kWh."
             + (f" Forecast {outdoor:.0f} °C outside." if outdoor is not None else ""),
-            saving_p_per_kwh=round(w_rate - p_rate, 2),
+            saving_p_per_kwh=round(w_rate - p_rate, 2), saving_basis="vs_dear_period",
         ))
         actions.append(PlanAction(
             "coast_space", w_start, coast_end, w_rate,
-            f"Lower the setpoint by about 1 °C and let the stored heat carry the house until {_hhmm(coast_end)}, "
-            "then resume normal heating.",
-            saving_p_per_kwh=round(w_rate - p_rate, 2),
+            f"The dear rate applies from {_hhmm(w_start)} to {_hhmm(w_end)}. Lower the setpoint by about 1 °C and let the heat stored "
+            f"by the earlier pre-heat carry the house until {_hhmm(coast_end)}, then resume normal heating.",
         ))
         reserved.update(s.start for s in best)
 

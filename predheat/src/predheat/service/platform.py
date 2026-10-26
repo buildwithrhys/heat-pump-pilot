@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from ..analytics import allocate_heat_pump_categories, counter_to_intervals, reconcile
+from ..analytics import allocate_heat_pump_categories, counter_to_intervals, energy_balance, reconcile
 from ..config import DataMode, OperatingMode, Settings, get_settings
 from ..db import init_db, session_scope
 from ..db import models as m
@@ -22,7 +22,7 @@ from ..domain import SIGNAL_CATALOGUE, CapabilityReport, Measurement, Provenance
 from ..integrations.base import ProviderHealth
 from ..model import DESIGN_INDOOR_C, COPModel, design_outdoor_c, fit_cop_model, fit_rc_model, prior_cop_model, survey_to_coefficient
 from ..optimiser import MPCInputs, build_mpc_plan, build_shadow_plan
-from ..pricing import RATES_AS_OF, REGION_NAMES, PriceClass, SlotPrice, build_rate_book, classify_slots, load_templates, replay, replay_with_book, scenario_intervals, standing_charge_for_period
+from ..pricing import RATES_AS_OF, REGION_NAMES, PriceClass, planning_prices, price_actual, reconcile_template, SlotPrice, build_rate_book, classify_slots, load_templates, replay, replay_with_book, scenario_intervals, standing_charge_for_period
 from ..timeutils import LONDON, local_day_bounds, now_utc
 from . import repository as repo
 
@@ -95,8 +95,15 @@ class Platform:
                 log.warning("tagged %d statistics rows as a separate source so they are never differenced against live readings", relabelled)
             purged = repo.purge_misstamped_history(s, self.property_id)
             if purged:
-                log.warning("removed %d mis-stamped history rows from an earlier release; re-backfilling", purged)
-                repo.log_quality_event(s, self.property_id, "info", "migration", f"removed {purged} mis-stamped history rows; counters re-derived")
+                log.warning("removed %d mis-stamped history rows from an earlier release", purged)
+                repo.log_quality_event(s, self.property_id, "info", "migration", f"removed {purged} mis-stamped history rows from an earlier release")
+            if self.settings.data_mode == DataMode.HOME_ASSISTANT:
+                dropped = repo.drop_state_statistics(s, self.property_id)
+                if dropped:
+                    log.warning("removed %d history rows taken from the daily-restarting 'state' column; re-fetching %d days using Home Assistant's running sum",
+                                dropped, self.settings.backfill_days)
+                    repo.log_quality_event(s, self.property_id, "info", "migration",
+                                           f"replaced {dropped} history rows with Home Assistant's running totals; {self.settings.backfill_days} days re-fetched")
         with session_scope(self.settings.database_url) as s:
             ov = repo.mapping_overrides(s, self.property_id)
             if hasattr(self.telemetry, "set_overrides"):
@@ -121,10 +128,16 @@ class Platform:
         elif self.settings.data_mode == DataMode.SIMULATED:
             days = self.settings.sim_days
         else:
-            # first start: the full window; later starts: top up the last two days
+            # first start (or after a migration asks for it): the full window; later starts: top up two days
             with session_scope(self.settings.database_url) as s:
+                prop = s.get(m.Property, self.property_id)
+                force = bool((prop.extra or {}).get("force_full_backfill"))
+                if force:
+                    extra = dict(prop.extra or {})
+                    extra.pop("force_full_backfill", None)
+                    prop.extra = extra
                 earliest = s.query(m.SensorMeasurement.ts).filter_by(property_id=self.property_id).order_by(m.SensorMeasurement.ts).first()
-            days = self.settings.backfill_days if earliest is None or (self.clock.now() - as_utc(earliest[0])) < timedelta(days=self.settings.backfill_days - 2) else 2
+            days = self.settings.backfill_days if force else (self.settings.backfill_days if earliest is None or (self.clock.now() - as_utc(earliest[0])) < timedelta(days=self.settings.backfill_days - 2) else 2)
         if days:
             await self.backfill(days)
         await self.poll_once()
@@ -221,6 +234,10 @@ class Platform:
                 result["building_model_error"] = str(exc)
                 repo.log_quality_event(s, self.property_id, "error", "thermal_model", str(exc))
             try:
+                result["discards_logged"] = self._audit_counters(s)
+            except Exception as exc:  # noqa: BLE001
+                result["audit_error"] = str(exc)
+            try:
                 result["compacted"] = self._maybe_compact(s)
             except Exception as exc:  # noqa: BLE001
                 result["compaction_error"] = str(exc)
@@ -231,6 +248,95 @@ class Platform:
                 repo.log_quality_event(s, self.property_id, "error", "heat_pump_model", str(exc))
         self.last_poll.update(result)
         return result
+
+    AUDITED = (Signal.GRID_IMPORT_KWH, Signal.HP_ELEC_HEATING_KWH, Signal.HP_HEAT_HEATING_KWH, Signal.HP_ENV_HEATING_KWH,
+               Signal.HP_ELEC_DHW_KWH, Signal.HP_HEAT_DHW_KWH, Signal.HP_ENV_DHW_KWH)
+
+    def _counter_measurements(self, s, sig: Signal, start: datetime, end: datetime) -> list[Measurement]:
+        return [Measurement(signal=sig, ts=as_utc(r.ts), value=r.value, quality=Quality(r.quality), provenance=Provenance(r.provenance), source_ref=r.source_ref)
+                for r in repo.measurements_for(s, self.property_id, sig.value, start, end)]
+
+    def _audit_counters(self, s, hours: int = 6) -> int:
+        """Log readings the accounting had to discard in the last few hours, once each."""
+        now = self.clock.now()
+        seen = repo.recent_event_messages(s, self.property_id, now - timedelta(days=2))
+        n = 0
+        for sig in self.AUDITED:
+            discards: list[dict] = []
+            counter_to_intervals(self._counter_measurements(s, sig, now - timedelta(hours=hours), now), sig.value, discards=discards)
+            for d in discards:
+                msg = f"{d['signal']}: {d['kwh']} kWh between {d['from'][11:16]} and {d['to'][11:16]} UTC on {d['to'][:10]} not counted ({d['reason']})"
+                if msg in seen:
+                    continue
+                repo.log_quality_event(s, self.property_id, "warning", "energy_accounting", msg, signal=d["signal"])
+                seen.add(msg)
+                n += 1
+        return n
+
+    def diagnostics_report(self, s, days: int = 30, raw_days: int = 3, now: datetime | None = None) -> dict[str, Any]:
+        """Everything needed to check the energy accounting by hand: raw stored readings,
+        the half-hourly figures derived from them by this release and by 0.3.0, what was
+        discarded and why, daily totals and the per-day heat balance."""
+        from ..analytics import legacy_v030
+
+        now = now or self.clock.now()
+        today = now.astimezone(LONDON).date()
+        start, _ = local_day_bounds(today - timedelta(days=days - 1))
+        _, end = local_day_bounds(today)
+        raw_start, _ = local_day_bounds(today - timedelta(days=raw_days - 1))
+        out: dict[str, Any] = {"generated_at": now.isoformat(), "version": __import__("predheat").__version__, "days": days,
+                               "period": {"start": start.isoformat(), "end": end.isoformat()}, "signals": {}}
+        daily: dict[str, dict[str, Any]] = {}
+        for sig in self.AUDITED:
+            ms = self._counter_measurements(s, sig, start - timedelta(hours=3), end)
+            discards: list[dict] = []
+            new = counter_to_intervals(ms, sig.value, discards=discards)
+            old = legacy_v030.counter_to_intervals(ms, sig.value)
+
+            def by_day(ints):
+                d: dict[str, float] = {}
+                for i in ints:
+                    if start <= as_utc(i.start) < end:
+                        k = as_utc(i.start).astimezone(LONDON).date().isoformat()
+                        d[k] = d.get(k, 0.0) + i.kwh
+                return d
+
+            nd, od = by_day(new), by_day(old)
+            for k in sorted(set(nd) | set(od)):
+                row = daily.setdefault(k, {"date": k})
+                row[f"{sig.value}_new"] = round(nd.get(k, 0.0), 3)
+                row[f"{sig.value}_old"] = round(od.get(k, 0.0), 3)
+            sources: dict[str, int] = {}
+            for x in ms:
+                sources[x.source_ref or "?"] = sources.get(x.source_ref or "?", 0) + 1
+            out["signals"][sig.value] = {
+                "readings": len(ms), "by_source": sources,
+                "raw": [{"ts": as_utc(x.ts).isoformat(), "value": x.value, "source": x.source_ref} for x in ms if as_utc(x.ts) >= raw_start][:4000],
+                "derived_half_hours": [{"start": as_utc(i.start).isoformat(), "kwh": round(i.kwh, 4), "notes": i.notes} for i in new if as_utc(i.start) >= raw_start][:2000],
+                "discards": discards[:500],
+                "total_new": round(sum(nd.values()), 2), "total_old": round(sum(od.values()), 2)}
+        for k, row in daily.items():
+            d = date.fromisoformat(k)
+            ds, de = local_day_bounds(d)
+            imp = [i for i in counter_to_intervals(self._counter_measurements(s, Signal.GRID_IMPORT_KWH, ds - timedelta(hours=3), de), "grid_import") if ds <= as_utc(i.start) < de]
+            n_slots = int((de - ds).total_seconds() // 1800)
+            row["import_slots_with_data_pct"] = round(len(imp) / n_slots * 100.0, 0)
+            row["import_plausible"] = row.get("grid_import_kwh_new", 0.0) <= 150.0
+            for label, e_key, h_key, v_key in (("space_heating", "hp_elec_heating_kwh", "hp_heat_heating_kwh", "hp_env_heating_kwh"),
+                                               ("hot_water", "hp_elec_dhw_kwh", "hp_heat_dhw_kwh", "hp_env_dhw_kwh")):
+                b = energy_balance(row.get(f"{e_key}_new", 0.0), row.get(f"{h_key}_new", 0.0), row.get(f"{v_key}_new") if f"{v_key}_new" in row else None)
+                row[f"{label}_balance"] = b["status"]
+                row[f"{label}_cop"] = b["cop"]
+        out["daily"] = [daily[k] for k in sorted(daily)]
+
+        def total(key: str, n: int) -> float:
+            cutoff = (today - timedelta(days=n - 1)).isoformat()
+            return round(sum(r.get(key, 0.0) for r in out["daily"] if r["date"] >= cutoff), 2)
+
+        out["summary"] = {f"last_{n}_days": {sig: {"new": total(f"{sig}_new", n), "old": total(f"{sig}_old", n)}
+                                             for sig in ("grid_import_kwh", "hp_elec_heating_kwh", "hp_heat_heating_kwh", "hp_env_heating_kwh")}
+                          for n in (7, 30) if n <= days}
+        return out
 
     def _maybe_compact(self, s, keep_full_days: int = 90) -> int:
         """Once a day, thin readings older than ``keep_full_days`` to hourly."""
@@ -403,42 +509,62 @@ class Platform:
 
     # ------------------------------------------------------------------ annual forecast from history and climate normals
     def _annual_profile(self, s, now: datetime) -> dict[str, Any]:
-        """Regress daily import on heating degree-days over the stored history and apply it to a
-        typical year of monthly mean temperatures for the home's latitude. Indicative."""
-        from ..pricing.climate import annual_degree_days, typical_year
+        """Regress daily import on heating degree-days over clean days and apply it to a typical
+        year for the home's climate band (from the tariff region). Indicative only."""
+        from ..pricing.climate import annual_degree_days, band_for
 
         today = now.astimezone(LONDON).date()
-        xs, ys = [], []
-        for i in range(60, 0, -1):
-            d = today - timedelta(days=i)
-            start, end = local_day_bounds(d)
-            temps = [r.value for r in repo.measurements_for(s, self.property_id, Signal.OUTDOOR_TEMPERATURE.value, start, end) if r.value is not None]
-            if len(temps) < 12:
+        first = today - timedelta(days=60)
+        start, _ = local_day_bounds(first)
+        _, end = local_day_bounds(today - timedelta(days=1))
+        rows = repo.measurements_for(s, self.property_id, Signal.GRID_IMPORT_KWH.value, start - timedelta(hours=1), end + timedelta(hours=1))
+        ints = counter_to_intervals([Measurement(signal=Signal.GRID_IMPORT_KWH, ts=as_utc(r.ts), value=r.value, quality=Quality(r.quality),
+                                                 provenance=Provenance(r.provenance), source_ref=r.source_ref) for r in rows], "grid_import")
+        metered = {as_utc(r.start): r.kwh for r in repo.metered_intervals_for(s, self.property_id, start, end)}
+        by_day: dict = {}
+        for i in ints:
+            if start <= as_utc(i.start) < end:
+                by_day.setdefault(as_utc(i.start).astimezone(LONDON).date(), {})[as_utc(i.start)] = i.kwh
+        for t, k in metered.items():
+            by_day.setdefault(t.astimezone(LONDON).date(), {})[t] = k  # metered wins
+        temps: dict = {}
+        for r in repo.measurements_for(s, self.property_id, Signal.OUTDOOR_TEMPERATURE.value, start, end):
+            if r.value is not None:
+                temps.setdefault(as_utc(r.ts).astimezone(LONDON).date(), []).append(r.value)
+        xs, ys, clean = [], [], 0
+        for d, slots in sorted(by_day.items()):
+            ds, de = local_day_bounds(d)
+            n_slots = int((de - ds).total_seconds() // 1800)
+            kwh = sum(slots.values())
+            t = temps.get(d, [])
+            if len(slots) < 0.9 * n_slots or not (0.5 < kwh <= 150.0) or len(t) < 12:
                 continue
-            hdd = sum(max(0.0, 15.5 - t) for t in temps) / len(temps)
-            metered = repo.metered_intervals_for(s, self.property_id, start, end)
-            if metered:
-                kwh = sum(r.kwh for r in metered)
-            else:
-                c = self._energy_costs(s, d, d + timedelta(days=1))
-                kwh = c["whole_home_import"]["kwh"] if c["whole_home_import"]["kwh"] > 0 and c["whole_home_import"].get("plausible", True) else c["heat_pump_total"]["kwh_electric"]
-            if kwh > 0:
-                xs.append(hdd)
-                ys.append(kwh)
-        if len(xs) < 7:
-            return {"status": "waiting", "reason": f"Needs at least 7 days of consumption and outdoor temperature; has {len(xs)}.", "days": len(xs)}
+            clean += 1
+            xs.append(sum(max(0.0, 15.5 - v) for v in t) / len(t))
+            ys.append(kwh)
+        tariff_code = self.last_poll.get("tariff_code") or ""
+        region = tariff_code.rsplit("-", 1)[-1] if "-" in tariff_code else None
+        prop = s.get(m.Property, self.property_id)
+        band = band_for(region if region and len(region) == 1 else None, prop.latitude if prop else None)
+        has_solar = any(c.signal in (Signal.PV_POWER, Signal.PV_GENERATION_KWH) and c.status == "available"
+                        for c in (self.capability_report.capabilities if self.capability_report else []))
+        if clean < 14:
+            return {"status": "waiting", "days": clean, "climate": band["label"], "climate_source": band["source"],
+                    "reason": f"A yearly estimate needs at least 14 days of complete, validated import data; there are {clean} so far."}
         n = len(xs)
         mx, my = sum(xs) / n, sum(ys) / n
         sxx = sum((x - mx) ** 2 for x in xs)
         slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx if sxx > 1e-9 else 0.0
         intercept = max(0.0, my - slope * mx)
-        prop = s.get(m.Property, self.property_id)
-        year = typical_year(prop.latitude if prop else None)
-        hdd_year = annual_degree_days(year)
+        hdd_year = annual_degree_days(band)
         annual_kwh = intercept * 365 + max(slope, 0.0) * hdd_year
+        note = ("From a straight-line fit of daily electricity against how cold each day was, applied to a typical year for "
+                f"{band['label']} ({band['source']}). Indicative; a mild or cold winter moves it by a fifth either way.")
+        if has_solar:
+            note += " Solar is not modelled: summer import will be lower than this, so treat it as an upper estimate."
         return {"status": "ok", "days": n, "kwh_per_day_no_heating": round(intercept, 2), "kwh_per_degree_day": round(max(slope, 0.0), 3),
-                "annual_degree_days": round(hdd_year, 0), "annual_kwh": round(annual_kwh, 0), "climate": year["label"],
-                "note": "From a straight-line fit of daily electricity against how cold each day was, applied to a typical year for your area. Indicative; a mild or cold winter moves it by a fifth either way."}
+                "annual_degree_days": round(hdd_year, 0), "annual_kwh": round(annual_kwh, 0), "climate": band["label"],
+                "climate_source": band["source"], "solar_modelled": False, "has_solar": has_solar, "upper_estimate": has_solar, "note": note}
 
     # ------------------------------------------------------------------ trial report
     def trial_report(self, s, days: int = 28, now: datetime | None = None) -> dict[str, Any]:
@@ -487,6 +613,229 @@ class Platform:
             out.update({"saving_pence_per_degree_day": round(diff, 2), "saving_pct": round(diff / b["mean"] * 100.0, 1), "saving_se_pct": round(se / b["mean"] * 100.0, 1),
                         "credible": b["n"] >= 5 and o["n"] >= 5 and abs(diff) > 2 * se})
         return out
+
+    # ------------------------------------------------------------------ control gate support
+    def climate_entities(self) -> dict[str, Any]:
+        """climate.* entities seen at discovery, with the myVAILLANT zone first and suggested when it is the only one."""
+        states = getattr(self.telemetry, "last_states", {}) or {}
+        rows = []
+        for eid, st in states.items():
+            if st.domain != "climate":
+                continue
+            rows.append({"entity_id": eid, "name": st.attributes.get("friendly_name") or eid, "platform": st.platform,
+                         "state": st.state, "current_temperature": st.attributes.get("current_temperature"), "target": st.attributes.get("temperature")})
+        rows.sort(key=lambda r: (r["platform"] != "mypyllant", r["entity_id"]))
+        vaillant = [r for r in rows if r["platform"] == "mypyllant"]
+        suggested = vaillant[0]["entity_id"] if len(vaillant) == 1 else (rows[0]["entity_id"] if len(rows) == 1 else None)
+        heaters = [{"entity_id": eid, "name": st.attributes.get("friendly_name") or eid, "platform": st.platform, "state": st.state,
+                    "current_temperature": st.attributes.get("current_temperature"), "target": st.attributes.get("temperature")}
+                   for eid, st in states.items() if st.domain == "water_heater"]
+        heaters.sort(key=lambda r: (r["platform"] != "mypyllant", r["entity_id"]))
+        return {"entities": rows, "suggested": suggested, "water_heaters": heaters}
+
+    def control_preconditions(self, s, now: datetime | None = None) -> dict[str, Any]:
+        """What a person should have in place before switching Allow control on."""
+        now = now or self.clock.now()
+        shadow_days = len({as_utc(r.issued_at).astimezone(LONDON).date() for r in s.query(m.OptimisationRun.issued_at)
+                          .filter(m.OptimisationRun.property_id == self.property_id, m.OptimisationRun.mode != "monitor").all()})
+        est = self.thermal_estimate(s, now=now)
+        acc = self.forecast_accuracy(s, now=now)
+        entity = self.settings.control_climate_entity
+        checks = [
+            {"key": "shadow_days", "label": "At least 7 days in Shadow mode", "met": shadow_days >= 7, "detail": f"{shadow_days} days of recorded plans so far"},
+            {"key": "heat_loss", "label": "Heat loss confidence 50% or above", "met": est.get("status") == "ok" and (est.get("confidence") or 0) >= 0.5,
+             "detail": f"{(est.get('confidence') or 0):.0%}" if est.get("status") == "ok" else "still waiting for data"},
+            {"key": "accuracy", "label": "Forecast accuracy under 0.5 °C", "met": acc.get("status") == "ok" and (acc.get("rmse_baseline_c") or 9) < 0.5,
+             "detail": f"{acc.get('rmse_baseline_c')} °C RMSE" if acc.get("status") == "ok" else "no scored plans yet"},
+            {"key": "entity", "label": "A climate entity chosen", "met": bool(entity), "detail": entity or "none"},
+        ]
+        return {"checks": checks, "all_met": all(c["met"] for c in checks), "max_offset_c": self.settings.control_max_offset_c}
+
+    def log_gate_change(self, s, enabled: bool, acknowledged: bool, unmet: list[str]) -> None:
+        s.add(m.ControlExecutionLog(property_id=self.property_id, ts=self.clock.now(), action="gate", target=self.settings.control_climate_entity,
+                                    requested_value="on" if enabled else "off", previous_value=None, status="changed",
+                                    reason=("Allow control switched on" + (f" with unmet preconditions acknowledged: {', '.join(unmet)}" if unmet else "")) if enabled else "Allow control switched off"))
+
+    # ------------------------------------------------------------------ sensor mapping overrides
+    def mapping_view(self, s) -> dict[str, Any]:
+        overrides = repo.mapping_overrides(s, self.property_id)
+        candidates = getattr(self.telemetry, "last_candidates", {}) or {}
+        rows = []
+        for cap in (self.capability_report.capabilities if self.capability_report else []):
+            rows.append({"signal": cap.signal.value, "description": SIGNAL_CATALOGUE[cap.signal].description, "unit": SIGNAL_CATALOGUE[cap.signal].unit,
+                         "source": cap.source_ref, "status": cap.status, "confidence": cap.confidence, "notes": cap.notes,
+                         "overridden": cap.signal.value in overrides, "candidates": candidates.get(cap.signal.value, [])})
+        return {"editable": hasattr(self.telemetry, "set_overrides"), "signals": rows}
+
+    async def set_mapping(self, s, signal: str, entity_id: str | None) -> dict[str, Any]:
+        if not hasattr(self.telemetry, "set_overrides"):
+            raise ValueError("mapping can only be changed with a Home Assistant data source")
+        sig = Signal(signal)
+        spec = SIGNAL_CATALOGUE[sig]
+        if entity_id:
+            states = getattr(self.telemetry, "last_states", {}) or {}
+            st = states.get(entity_id)
+            if st is None:
+                fresh = {x.entity_id: x for x in await self.telemetry.client.states()}
+                st = fresh.get(entity_id)
+                if st is None:
+                    raise ValueError(f"{entity_id} is not a Home Assistant entity")
+                states[entity_id] = st
+            scale = spec.unit_scale.get(st.unit or "", 1.0) if spec.unit_scale else 1.0
+            if spec.unit_scale and st.unit and st.unit not in spec.unit_scale:
+                raise ValueError(f"{entity_id} reports {st.unit}, which cannot be converted to {spec.unit}")
+            repo.set_mapping_override(s, self.property_id, signal, entity_id, scale, Provenance.HOME_ASSISTANT.value, spec.default_quality.value if spec.default_quality.value != "unavailable" else "sensor")
+        else:
+            repo.clear_mapping_override(s, self.property_id, signal)
+        ov = repo.mapping_overrides(s, self.property_id)
+        self.capability_report = self.telemetry.set_overrides({k: {"source_ref": r.source_ref, "unit_scale": r.unit_scale} for k, r in ov.items()}, self.capability_report)
+        if not entity_id:
+            # back to discovery for this signal: rerun discovery for an accurate report
+            self.capability_report = await self.telemetry.discover()
+        self._memo.clear()
+        return self.mapping_view(s)
+
+    # ------------------------------------------------------------------ tariff comparison
+    def compare_tariffs(self, s, days: int = 30, now: datetime | None = None, ev_kwh_per_day: float = 0.0, battery_kwh_per_day: float = 0.0) -> dict[str, Any]:
+        now = now or self.clock.now()
+        return self._cached(("tariffs", days, now.date(), ev_kwh_per_day, battery_kwh_per_day),
+                            lambda: self._compare_tariffs(s, days, now, ev_kwh_per_day, battery_kwh_per_day))
+
+    async def refresh_live_rates(self, s, days: int, now: datetime | None = None) -> dict[str, Any]:
+        """Fetch each template's real unit rates for your region from the Octopus API and keep them
+        as rate intervals, so the replay uses published prices rather than indicative ones. Also
+        makes Agile replayable."""
+        if self.octopus_api is None:
+            return {"status": "unavailable", "reason": "no API client"}
+        now = now or self.clock.now()
+        tariff_code = self.last_poll.get("tariff_code") or ""
+        region = tariff_code.rsplit("-", 1)[-1] if "-" in tariff_code else None
+        if not region or len(region) != 1:
+            return {"status": "unavailable", "reason": "region unknown until the Octopus tariff code is seen"}
+        from ..pricing.octopus_api import expand_to_half_hours
+        start = now - timedelta(days=days + 1)
+        fetched = {}
+        for t in load_templates(self.settings.data_dir):
+            if t.code == "_error":
+                continue
+            product = await self.octopus_api.latest_product_code(t.code)
+            if not product:
+                continue
+            try:
+                rates = await self.octopus_api.unit_rates(product, region, start, now)
+                code = f"E-1R-{product}-{region}"
+                n = repo.upsert_rates(s, expand_to_half_hours(rates, start, now), now)
+                sc = await self.octopus_api.standing_charge(product, region)
+                fetched[t.code] = {"product": product, "tariff_code": code, "rows": n, "standing_p_per_day": sc}
+            except Exception as exc:  # noqa: BLE001
+                fetched[t.code] = {"error": str(exc)}
+        self.last_poll["live_rates"] = fetched
+        self._memo = {k: v for k, v in self._memo.items() if k[1:2] != ("tariffs",)}
+        return {"status": "ok", "region": region, "fetched": fetched}
+
+    def _compare_tariffs(self, s, days: int, now: datetime, ev_kwh_per_day: float = 0.0, battery_kwh_per_day: float = 0.0) -> dict[str, Any]:
+        """Replay the last ``days`` of half-hourly import on each tariff template."""
+        today = now.astimezone(LONDON).date()
+        start, _ = local_day_bounds(today - timedelta(days=days))
+        _, end = local_day_bounds(today - timedelta(days=1))
+
+        def counter(sig: Signal):
+            rows = repo.measurements_for(s, self.property_id, sig.value, start - timedelta(hours=1), end + timedelta(hours=1))
+            return [Measurement(signal=sig, ts=as_utc(r.ts), value=r.value, quality=Quality(r.quality), provenance=Provenance(r.provenance), source_ref=r.source_ref) for r in rows]
+
+        source = "whole_home_import"
+        ints = [i for i in counter_to_intervals(counter(Signal.GRID_IMPORT_KWH), "grid_import") if start <= i.start < end]
+        metered = repo.metered_intervals_for(s, self.property_id, start, end)
+        if len(metered) >= 0.9 * max(1, int((end - start).total_seconds() // 1800)):
+            from ..analytics.energy_accounting import EnergyInterval
+            ints = [EnergyInterval(as_utc(r.start), as_utc(r.end), r.kwh, Quality.METERED, "grid_import") for r in metered]
+            source = "smart_meter_half_hourly"
+        if sum(i.kwh for i in ints) < 1.0:
+            source = "heat_pump_only"
+            heat_e = counter_to_intervals(counter(Signal.HP_ELEC_HEATING_KWH), "e")
+            dhw_e = counter_to_intervals(counter(Signal.HP_ELEC_DHW_KWH), "d")
+            by: dict[datetime, float] = {}
+            for i in heat_e + dhw_e:
+                if start <= i.start < end:
+                    by[i.start] = by.get(i.start, 0.0) + i.kwh
+            from ..analytics.energy_accounting import EnergyInterval
+            ints = [EnergyInterval(k, k + timedelta(minutes=30), v, Quality.MODEL_DERIVED, "hp") for k, v in sorted(by.items())]
+        triples = [(as_utc(i.start), as_utc(i.end), i.kwh) for i in ints]
+        total_kwh = sum(k for _, _, k in triples)
+        if total_kwh < 1.0:
+            return {"status": "no_data", "reason": "Not enough consumption history yet.", "days": days, "results": []}
+        if total_kwh > _import_limit_kwh(days):
+            return {"status": "implausible", "reason": f"Data looks wrong: {total_kwh:,.0f} kWh of import in {days} days. See System health.", "days": days, "results": [], "kwh": round(total_kwh, 1)}
+        # What you paid, on the intervals that have a stored price. Every replay uses exactly the same
+        # intervals so the comparison is like for like; unpriced intervals are left out of both sides.
+        tariff_code = self.last_poll.get("tariff_code")
+        region = tariff_code.rsplit("-", 1)[-1] if tariff_code and "-" in tariff_code else None
+        actual = None
+        compare = triples
+        if tariff_code:
+            book = build_rate_book([_ri(r) for r in repo.rates_for(s, tariff_code, start, end)], tariff_code)
+            a = price_actual(book, triples)
+            if a["kwh_priced"] >= 1.0:
+                compare = a.pop("priced_triples")
+                charges = s.query(m.TariffStandingCharge).filter_by(tariff_code=tariff_code).all()
+                from ..domain import StandingCharge
+                per_day = max((c.pence_per_day for c in charges), default=0.0)
+                sc = per_day * a["days_priced"]
+                actual = {"code": tariff_code, "name": "Your current tariff (your actual prices)", "unit_pence": a["unit_pence"], "standing_pence": round(sc, 1),
+                          "total_pence": round(a["unit_pence"] + sc, 1), "kwh": a["kwh_priced"], "kwh_total": a["kwh_total"],
+                          "coverage_pct": a["coverage_pct"], "days_priced": a["days_priced"], "prices_complete": a["coverage_pct"] >= 99.0,
+                          "effective_p_per_kwh": a["effective_p_per_kwh"]}
+        results = []
+        live = self.last_poll.get("live_rates") or {}
+        annual = self._annual_profile(s, now)
+        current_code = next((t.code for t in load_templates(self.settings.data_dir) if tariff_code and t.code in tariff_code), None)
+        reconciliation = None
+        for t in load_templates(self.settings.data_dir):
+            if t.code == "_error":
+                results.append({"code": t.code, "name": t.name, "replayable": False, "note": t.description})
+                continue
+            if actual and t.code == current_code:
+                reconciliation = reconcile_template(t, {"unit_pence": actual["unit_pence"], "priced_triples": compare, "effective_p_per_kwh": actual["effective_p_per_kwh"]})
+                r = {"code": t.code, "name": t.name, "unit_pence": actual["unit_pence"], "standing_pence": actual["standing_pence"],
+                     "total_pence": actual["total_pence"], "kwh": actual["kwh"], "days": actual["days_priced"],
+                     "cheap_share": replay(t, compare)["cheap_share"], "effective_p_per_kwh": actual["effective_p_per_kwh"],
+                     "description": t.description, "replayable": True, "requires": t.requires, "current": True, "rates_source": "your actual prices",
+                     "note": "Your tariff, at the prices you actually paid, including any Intelligent Octopus slots."}
+                r["annualised_pounds"] = _annualise(r, annual)
+                results.append(r)
+                continue
+            lr = live.get(t.code) or {}
+            if lr.get("tariff_code"):
+                lbook = build_rate_book([_ri(r) for r in repo.rates_for(s, lr["tariff_code"], start, end)], lr["tariff_code"])
+                if lbook.intervals:
+                    r = replay_with_book(lbook, t, compare, lr.get("standing_p_per_day"), ev_kwh_per_day, battery_kwh_per_day)
+                    r.update({"description": t.description, "replayable": True, "requires": t.requires, "note": (t.note + " " if t.note else "") + f"Priced with published rates for product {lr['product']}.",
+                              "rates_source": "octopus_api", "annualised_pounds": _annualise(r, annual)})
+                    results.append(r)
+                    continue
+            if not t.replayable:
+                results.append({"code": t.code, "name": t.name, "description": t.description, "replayable": False, "note": t.note, "requires": t.requires})
+                continue
+            r = replay(t, scenario_intervals(t, compare, ev_kwh_per_day, battery_kwh_per_day))
+            r.update({"description": t.description, "replayable": True, "requires": t.requires, "note": t.note, "rates_source": "indicative",
+                      "annualised_pounds": _annualise(r, annual)})
+            results.append(r)
+        ranked = sorted([r for r in results if r.get("replayable")], key=lambda r: r["total_pence"])
+        best = ranked[0] if ranked else None
+        if actual and best:
+            actual["difference_vs_best_pence"] = round(actual["total_pence"] - best["total_pence"], 1)
+            actual["product"] = current_code
+            actual["on_cheapest"] = bool(best.get("current"))
+        return {"status": "ok", "days": days, "period": {"start": start.isoformat(), "end": end.isoformat()}, "source": source,
+                "kwh": round(total_kwh, 2), "kwh_compared": round(sum(k for _, _, k in compare), 2), "rates_as_of": RATES_AS_OF,
+                "region": region, "region_name": REGION_NAMES.get(region or "", None),
+                "scenario": {"ev_kwh_per_day": ev_kwh_per_day, "battery_kwh_per_day": battery_kwh_per_day},
+                "annual": annual, "live_rates": {k: v.get("product") for k, v in live.items() if v.get("product")},
+                "actual": actual, "reconciliation": reconciliation, "results": ranked + [r for r in results if not r.get("replayable")],
+                "caveats": ["Every tariff is priced on exactly the same half-hours: those for which PredHeat has your actual prices. Half-hours without a stored price are left out of both sides.",
+                            "Replay of your consumption as it happened. A tariff with different cheap windows would change when PredHeat heats, so the optimised figure would be lower still.",
+                            f"Other tariffs use indicative national rates unless you tick \"Use published rates for my region\"{' (your tariff code says region ' + region + (', ' + REGION_NAMES[region] if region in REGION_NAMES else '') + ')' if region else ''}.",
+                            "Exit fees, eligibility (EV, smart meter) and export rates are not included."]}
 
     # ------------------------------------------------------------------ control gate support
     def climate_entities(self) -> dict[str, Any]:
@@ -730,7 +1079,7 @@ class Platform:
         from ..domain import Dispatch, DispatchKind
         dispatches = [Dispatch(kind=DispatchKind(d.kind), start=as_utc(d.start), end=as_utc(d.end), charge_kwh=d.charge_kwh,
                                source=d.source, location=d.location, observed_at=as_utc(d.observed_at)) for d in disp]
-        return classify_slots(start, end, book, dispatches)
+        return classify_slots(start, end, book, dispatches, now=self.clock.now())
 
     def _latest_weather(self, s) -> list[m.WeatherForecast]:
         latest_issue = s.query(m.WeatherForecast.issued_at).filter_by(property_id=self.property_id).order_by(m.WeatherForecast.issued_at.desc()).first()
@@ -762,7 +1111,7 @@ class Platform:
         hp = self.heat_pump_estimate(s, now=now)
         t_in0 = value(Signal.INDOOR_TEMPERATURE)
         # up to 48 hours ahead; beyond tomorrow's published prices the slots are "assumed", which classify_slots marks
-        priced = [sp for sp in slots if not math.isnan(sp.rate_p_per_kwh) and sp.end > now][:96]
+        priced = [sp for sp in planning_prices(slots) if not math.isnan(sp.rate_p_per_kwh) and sp.end > now][:96]
         why_not = None
         if est["status"] != "ok":
             why_not = f"building model not ready ({est.get('reason', est['status'])})"
@@ -847,6 +1196,9 @@ class Platform:
             near7 = any(4.0 <= t <= 10.0 for t, h in zip(t_out, hours) if e_h[h] >= 0.3)
             below2 = any(t < 2.0 for t, h in zip(t_out, hours) if e_h[h] >= 0.3)
             observed = round(h_tot / e_tot, 2) if e_tot >= 1.0 else None
+            implausible = observed is not None and not (1.0 <= observed <= 7.0)
+            if implausible:
+                observed = None  # never present a COP below 1 (or above 7) as a real result
             status = "ok" if len(running) >= 24 and observed else "waiting"
             out = {"label": label, "status": status, "observed_cop": observed, "kwh_electric": round(e_tot, 1), "kwh_heat": round(h_tot, 1),
                    "running_hours": len(running), "days_with_data": days_seen,
@@ -858,6 +1210,10 @@ class Platform:
             if status != "ok":
                 out["reason"] = (f"PredHeat works out {label.lower()} efficiency from the electricity used and the heat delivered while the heat pump runs. "
                                  f"It needs about a day of running. So far: {len(running)} running {'hour' if len(running) == 1 else 'hours'} over {days_seen} {'day' if days_seen == 1 else 'days'}.")
+            if implausible:
+                out["reason"] = (f"The {label.lower()} heat and electricity figures do not add up yet (heat delivered is less than the electricity used), "
+                                 "which usually means hourly figures arrived late or were lost. Efficiency is shown again once they add up. "
+                                 "The Download diagnostics button on System health shows the readings.")
             return out
 
         heating = end_use(Signal.HP_ELEC_HEATING_KWH, Signal.HP_HEAT_HEATING_KWH, "Space heating")
@@ -1050,6 +1406,9 @@ class Platform:
         aux_d = clip(counter_to_intervals(counter(Signal.AUX_ELEC_DHW_KWH), "aux_elec_dhw"))
         heat_th = clip(counter_to_intervals(counter(Signal.HP_HEAT_HEATING_KWH), "heat_heating"))
         dhw_th = clip(counter_to_intervals(counter(Signal.HP_HEAT_DHW_KWH), "heat_dhw"))
+        env_h_rows, env_d_rows = counter(Signal.HP_ENV_HEATING_KWH), counter(Signal.HP_ENV_DHW_KWH)
+        env_h = clip(counter_to_intervals(env_h_rows, "env_heating")) if env_h_rows else None
+        env_d = clip(counter_to_intervals(env_d_rows, "env_dhw")) if env_d_rows else None
         grid_imp = clip(counter_to_intervals(counter(Signal.GRID_IMPORT_KWH), "grid_import"))
         metered = repo.metered_intervals_for(s, self.property_id, start, end)
         slots_in_period = max(1, int((end - start).total_seconds() // 1800))
@@ -1096,21 +1455,59 @@ class Platform:
             charges = s.query(m.TariffStandingCharge).filter_by(tariff_code=tariff_code).all()
             from ..domain import StandingCharge
             sc_pence = standing_charge_for_period([StandingCharge(start=as_utc(c.start), end=as_utc(c.end), pence_per_day=c.pence_per_day, tariff_code=c.tariff_code) for c in charges], start, min(end, self.clock.now()))
-        heat_total_th = heat_kwh_th + dhw_kwh_th
+        # per local day: does heat = electricity + outside air? COP and heat-based figures only from days that add up
+        def per_day(ints) -> dict:
+            out: dict = {}
+            for i in ints or []:
+                d = as_utc(i.start).astimezone(LONDON).date()
+                out[d] = out.get(d, 0.0) + i.kwh
+            return out
+
+        def balance(elec_ints, heat_ints, env_ints, cost_pence: float) -> dict[str, Any]:
+            e_d, h_d, v_d = per_day(elec_ints), per_day(heat_ints), per_day(env_ints) if env_ints is not None else None
+            days = sorted(set(e_d) | set(h_d))
+            ok_days, flagged = [], []
+            for d in days:
+                b = energy_balance(e_d.get(d, 0.0), h_d.get(d, 0.0), (v_d or {}).get(d, 0.0) if v_d is not None else None)
+                if b["status"] == "ok":
+                    ok_days.append(d)
+                elif b["status"] in ("inconsistent", "implausible"):
+                    flagged.append({"date": d.isoformat(), **{k: (round(v, 2) if isinstance(v, float) else v) for k, v in b.items() if k != "cop"}})
+            e_ok = sum(e_d.get(d, 0.0) for d in ok_days)
+            h_ok = sum(h_d.get(d, 0.0) for d in ok_days)
+            e_all = sum(e_d.values())
+            cost_ok = cost_pence * (e_ok / e_all) if e_all else 0.0
+            cop = round(h_ok / e_ok, 2) if e_ok >= 0.2 and h_ok / e_ok >= 1.0 else None
+            env_total = round(sum(v_d.values()), 3) if v_d is not None else None
+            return {"cop": cop, "days_ok": len(ok_days), "days_flagged": flagged, "kwh_env": env_total,
+                    "kwh_heat_ok": round(h_ok, 3), "kwh_electric_ok": round(e_ok, 3),
+                    "pence_per_kwh_heat": round(cost_ok / h_ok, 2) if h_ok >= 0.5 else None,
+                    "status": "ok" if not flagged else ("partial" if ok_days else "inconsistent")}
+
+        sh_bal = balance(heat_e, heat_th, env_h, hc)
+        hw_bal = balance(dhw_e, dhw_th, env_d, dc)
+        heat_for_gas = sh_bal["kwh_heat_ok"] + hw_bal["kwh_heat_ok"]
+        cost_for_gas = (hc * (sh_bal["kwh_electric_ok"] / hk) if hk else 0.0) + (dc * (hw_bal["kwh_electric_ok"] / dk) if dk else 0.0)
         eff = max(0.5, min(1.0, self.settings.boiler_efficiency))
-        gas_kwh = heat_total_th / eff
+        gas_kwh = heat_for_gas / eff
         gas_cost = round(gas_kwh * self.settings.gas_price_p_per_kwh, 2)
+        # coverage: which days in the period have any data at all
+        all_days = [start_day + timedelta(days=i) for i in range((end_day - start_day).days)]
+        with_data = sorted({as_utc(i.start).astimezone(LONDON).date() for i in heat_e + dhw_e + grid_imp + heat_th if i.kwh > 0})
+        coverage = {"days": len(all_days), "days_with_data": len(with_data), "first_day_with_data": with_data[0].isoformat() if with_data else None}
         return {
+            "coverage": coverage,
             "period": {"start": start.isoformat(), "end": end.isoformat()},
             "tariff_code": tariff_code,
             "gas_equivalent": {"kwh_gas": round(gas_kwh, 3), "cost_pence": gas_cost, "price_p_per_kwh": self.settings.gas_price_p_per_kwh,
-                               "boiler_efficiency": eff, "saving_pence": round(gas_cost - (hc + dc), 2),
-                               "note": "Modelled what-if: the same delivered heat from a gas boiler at the configured efficiency and unit price. Standing charges excluded on both sides."},
-            "space_heating": {"kwh_electric": hk, "kwh_heat": heat_kwh_th, "cop": round(heat_kwh_th / hk, 2) if hk else None,
-                              "cost_pence": hc, "pence_per_kwh_heat": round(hc / heat_kwh_th, 2) if heat_kwh_th else None,
+                               "boiler_efficiency": eff, "saving_pence": round(gas_cost - cost_for_gas, 2),
+                               "days_used": sh_bal["days_ok"],
+                               "note": "Modelled what-if: the same delivered heat from a gas boiler at the configured efficiency and unit price, on days whose heat pump figures add up. Standing charges excluded on both sides."},
+            "space_heating": {"kwh_electric": hk, "kwh_heat": heat_kwh_th, "kwh_env": sh_bal["kwh_env"], "cop": sh_bal["cop"],
+                              "cost_pence": hc, "pence_per_kwh_heat": sh_bal["pence_per_kwh_heat"], "balance": {k: v for k, v in sh_bal.items() if k not in ("cop", "kwh_env", "pence_per_kwh_heat")},
                               "quality": q_of(heat_e), "prices_complete": hok},
-            "hot_water": {"kwh_electric": dk, "kwh_heat": dhw_kwh_th, "cop": round(dhw_kwh_th / dk, 2) if dk else None,
-                          "cost_pence": dc, "pence_per_kwh_heat": round(dc / dhw_kwh_th, 2) if dhw_kwh_th else None,
+            "hot_water": {"kwh_electric": dk, "kwh_heat": dhw_kwh_th, "kwh_env": hw_bal["kwh_env"], "cop": hw_bal["cop"],
+                          "cost_pence": dc, "pence_per_kwh_heat": hw_bal["pence_per_kwh_heat"], "balance": {k: v for k, v in hw_bal.items() if k not in ("cop", "kwh_env", "pence_per_kwh_heat")},
                           "quality": q_of(dhw_e), "prices_complete": dok},
             "auxiliary": {"kwh_electric": auxk, "cost_pence": auxc, "quality": q_of(aux_h + aux_d)},
             "standby": {"kwh_electric": round(sk, 3), "cost_pence": sc_, "quality": "estimated"},
@@ -1132,7 +1529,8 @@ class Platform:
         with session_scope(self.settings.database_url) as s:
             while d < end_day:
                 c = self._energy_costs(s, d, d + timedelta(days=1))
-                out.append({"date": d.isoformat(), "space_heating": c["space_heating"], "hot_water": c["hot_water"],
+                out.append({"date": d.isoformat(), "has_data": c["coverage"]["days_with_data"] > 0,
+                            "space_heating": c["space_heating"], "hot_water": c["hot_water"],
                             "heat_pump_total": c["heat_pump_total"], "whole_home_import": c["whole_home_import"],
                             "standing_charge_pence": c["standing_charge_pence"], "gas_equivalent": c["gas_equivalent"]})
                 d += timedelta(days=1)
@@ -1157,7 +1555,16 @@ class Platform:
         groups: dict[str, dict[str, Any]] = {}
         for d in daily:
             k, label = key(d["date"])
-            g = groups.setdefault(k, {"period_start": k, "period_end": d["date"], "label": label, "days": 0,
+            if not d.get("has_data", True):
+                groups.setdefault(k, {"period_start": k, "period_end": d["date"], "label": label, "days": 0, "days_without_data": 0,
+                                      "space_heating": {"kwh_electric": 0.0, "kwh_heat": 0.0, "cost_pence": 0.0, "quality": "none", "prices_complete": True},
+                                      "hot_water": {"kwh_electric": 0.0, "kwh_heat": 0.0, "cost_pence": 0.0, "quality": "none", "prices_complete": True},
+                                      "heat_pump_total": {"kwh_electric": 0.0, "cost_pence": 0.0},
+                                      "whole_home_import": {"kwh": 0.0, "cost_pence": 0.0}, "standing_charge_pence": 0.0,
+                                      "gas_equivalent": {"kwh_gas": 0.0, "cost_pence": 0.0, "saving_pence": 0.0}})
+                groups[k]["days_without_data"] = groups[k].get("days_without_data", 0) + 1
+                continue
+            g = groups.setdefault(k, {"period_start": k, "period_end": d["date"], "label": label, "days": 0, "days_without_data": 0,
                                       "space_heating": {"kwh_electric": 0.0, "kwh_heat": 0.0, "cost_pence": 0.0, "quality": d["space_heating"]["quality"], "prices_complete": True},
                                       "hot_water": {"kwh_electric": 0.0, "kwh_heat": 0.0, "cost_pence": 0.0, "quality": d["hot_water"]["quality"], "prices_complete": True},
                                       "heat_pump_total": {"kwh_electric": 0.0, "cost_pence": 0.0},
@@ -1178,9 +1585,11 @@ class Platform:
                 g["gas_equivalent"][f] += d["gas_equivalent"][f]
         out = []
         for g in groups.values():
+            g["has_data"] = g["days"] > 0
             for cat in ("space_heating", "hot_water"):
                 e, h = g[cat]["kwh_electric"], g[cat]["kwh_heat"]
-                g[cat]["cop"] = round(h / e, 2) if e else None
+                b = energy_balance(e, h, None)
+                g[cat]["cop"] = b["cop"]
                 g[cat]["pence_per_kwh_heat"] = round(g[cat]["cost_pence"] / h, 2) if h else None
                 for f in ("kwh_electric", "kwh_heat", "cost_pence"):
                     g[cat][f] = round(g[cat][f], 3)

@@ -35,9 +35,19 @@ export interface Reading {
   stale: boolean;
 }
 
+export interface Balance {
+  status: "ok" | "partial" | "inconsistent";
+  days_ok: number;
+  days_flagged: { date: string; status: string; elec_kwh: number; heat_kwh: number; env_kwh: number | null; mismatch_pct?: number }[];
+  kwh_heat_ok: number;
+  kwh_electric_ok: number;
+}
+
 export interface CostBlock {
   kwh_electric: number;
   kwh_heat?: number;
+  kwh_env?: number | null;
+  balance?: Balance;
   cop?: number | null;
   cost_pence: number;
   pence_per_kwh_heat?: number | null;
@@ -56,6 +66,7 @@ export interface GasEquivalent {
 
 export interface Costs {
   period: { start: string; end: string };
+  coverage?: { days: number; days_with_data: number; first_day_with_data: string | null };
   tariff_code: string | null;
   gas_equivalent: GasEquivalent;
   space_heating: CostBlock;
@@ -76,6 +87,7 @@ export interface PlanAction {
   rate_p: number | null;
   reason: string;
   saving_p_per_kwh: number | null;
+  saving_basis?: "vs_dear_period" | "vs_average" | null;
 }
 
 export interface NextAction {
@@ -234,6 +246,7 @@ export interface TariffResult {
   requires?: string[];
   note?: string;
   rates_source?: string;
+  current?: boolean;
 }
 
 export interface TariffComparison {
@@ -246,11 +259,13 @@ export interface TariffComparison {
   rates_as_of?: string;
   region?: string | null;
   region_name?: string | null;
-  actual?: { code: string; name: string; unit_pence: number; standing_pence: number; total_pence: number; kwh: number; prices_complete: boolean; effective_p_per_kwh: number; difference_vs_best_pence?: number; product?: string | null; on_cheapest?: boolean } | null;
+  actual?: { code: string; name: string; unit_pence: number; standing_pence: number; total_pence: number; kwh: number; kwh_total: number; coverage_pct: number; days_priced: number; prices_complete: boolean; effective_p_per_kwh: number; difference_vs_best_pence?: number; product?: string | null; on_cheapest?: boolean } | null;
+  reconciliation?: { template_unit_pence: number; actual_unit_pence: number; difference_pct: number | null; template_effective_p_per_kwh: number | null; actual_effective_p_per_kwh: number | null } | null;
+  kwh_compared?: number;
   results: TariffResult[];
   caveats?: string[];
   scenario?: { ev_kwh_per_day: number; battery_kwh_per_day: number };
-  annual?: { status: string; reason?: string; days?: number; kwh_per_day_no_heating?: number; kwh_per_degree_day?: number; annual_degree_days?: number; annual_kwh?: number; climate?: string; note?: string };
+  annual?: { status: string; reason?: string; days?: number; kwh_per_day_no_heating?: number; kwh_per_degree_day?: number; annual_degree_days?: number; annual_kwh?: number; climate?: string; climate_source?: string; has_solar?: boolean; upper_estimate?: boolean; note?: string };
   live_rates?: Record<string, string>;
 }
 
@@ -337,6 +352,8 @@ export interface Overview {
 
 export interface DailyRow {
   date: string;
+  has_data?: boolean;
+  days_without_data?: number;
   period_start?: string;
   period_end?: string;
   label?: string;
@@ -386,6 +403,7 @@ export const api = {
     return url(`/api/costs.csv?${qs}`);
   },
   mapping: () => get<MappingView>("/api/mapping"),
+  diagnosticsUrl: (days = 30) => url(`/api/diagnostics/report?days=${days}&raw_days=3&download=true`),
   setMapping: (signal: string, entityId: string | null) => send<MappingView>("PUT", `/api/mapping/${signal}`, { entity_id: entityId ?? "" }),
   timeline: (hours = 48) => get<Timeline>(`/api/timeline?hours=${hours}`),
   system: () => get<SystemHealth>("/api/system"),

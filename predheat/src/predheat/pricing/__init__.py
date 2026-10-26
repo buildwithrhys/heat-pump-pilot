@@ -1,4 +1,4 @@
-from .tariffs import DEFAULT_TEMPLATES, RATES_AS_OF, REGION_NAMES, TariffTemplate, load_templates, replay, replay_with_book, scenario_intervals
+from .tariffs import DEFAULT_TEMPLATES, RATES_AS_OF, REGION_NAMES, TariffTemplate, load_templates, price_actual, reconcile_template, replay, replay_with_book, scenario_intervals
 from .tariff_engine import (
     RateBook,
     SlotPrice,
@@ -6,6 +6,7 @@ from .tariff_engine import (
     build_rate_book,
     classify_slots,
     cost_energy_intervals,
+    planning_prices,
     standing_charge_for_period,
 )
 
@@ -17,6 +18,8 @@ __all__ = [
     "load_templates",
     "replay",
     "replay_with_book",
+    "price_actual",
+    "reconcile_template",
     "scenario_intervals",
     "RateBook",
     "SlotPrice",
@@ -24,5 +27,6 @@ __all__ = [
     "build_rate_book",
     "classify_slots",
     "cost_energy_intervals",
+    "planning_prices",
     "standing_charge_for_period",
 ]

@@ -190,3 +190,33 @@ def replay_with_book(book, template: TariffTemplate, intervals: list[tuple[datet
     return {"code": template.code, "name": template.name, "unit_pence": round(unit, 1), "standing_pence": round(standing, 1),
             "total_pence": round(unit + standing, 1), "kwh": round(kwh, 2), "days": round(days, 2),
             "cheap_share": round(cheap / kwh, 3) if kwh else None, "effective_p_per_kwh": round(unit / kwh, 2) if kwh else None}
+
+
+def price_actual(book, triples: list[tuple[datetime, datetime, float]]) -> dict[str, Any]:
+    """What you actually paid, on the intervals that have a stored price.
+
+    Intervals without a price are excluded from the cost *and* from the kWh, so the
+    effective rate is never understated; ``coverage_pct`` says how much was priced.
+    """
+    priced, unit, kwh_priced, kwh_total = [], 0.0, 0.0, 0.0
+    for st, en, k in triples:
+        kwh_total += k
+        c, _eff, complete = book.cost_pence(st, en, k)
+        if complete:
+            priced.append((st, en, k))
+            unit += c
+            kwh_priced += k
+    days = len({st.astimezone(LONDON).date() for st, _e, _k in priced})
+    return {"unit_pence": round(unit, 1), "kwh_priced": round(kwh_priced, 2), "kwh_total": round(kwh_total, 2),
+            "coverage_pct": round(kwh_priced / kwh_total * 100.0, 1) if kwh_total else 0.0, "days_priced": days,
+            "effective_p_per_kwh": round(unit / kwh_priced, 2) if kwh_priced else None, "priced_triples": priced}
+
+
+def reconcile_template(template: TariffTemplate, actual: dict[str, Any]) -> dict[str, Any]:
+    """Replay your current tariff's template on exactly the priced intervals and compare with
+    what you paid. A large difference means the template's rates (or the dispatch slots it
+    cannot model) do not match your bill, and the other replays should be read with that in mind."""
+    r = replay(template, actual["priced_triples"])
+    diff = (r["unit_pence"] - actual["unit_pence"]) / actual["unit_pence"] * 100.0 if actual["unit_pence"] else None
+    return {"template_unit_pence": r["unit_pence"], "actual_unit_pence": actual["unit_pence"], "difference_pct": round(diff, 1) if diff is not None else None,
+            "template_effective_p_per_kwh": r["effective_p_per_kwh"], "actual_effective_p_per_kwh": actual["effective_p_per_kwh"]}

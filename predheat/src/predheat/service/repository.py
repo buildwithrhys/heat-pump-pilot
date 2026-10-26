@@ -331,3 +331,32 @@ def samples(session: Session, property_id: int, signal: str, start: datetime, en
     rows = measurements_for(session, property_id, signal, start, end)
     return [{"ts": as_utc(r.ts).isoformat(), "value": r.value, "text": r.text, "source": r.source_ref, "quality": r.quality,
              "ingested_at": as_utc(r.ingested_at).isoformat() if r.ingested_at else None} for r in rows]
+
+
+def drop_state_statistics(session: Session, property_id: int) -> int:
+    """One-off (0.3.1): remove counter rows from Home Assistant statistics stored with the
+    "state" column, which restarts daily for myVAILLANT figures. They are re-fetched using
+    the running "sum". Returns rows removed; 0 if already done."""
+    from ..domain.signals import SIGNAL_CATALOGUE, SignalKind
+
+    prop = session.get(m.Property, property_id)
+    extra = dict(prop.extra or {})
+    done = set(extra.get("migrations", []))
+    if "lts_sum_v3" in done:
+        return 0
+    cumulative = [s.value for s, spec in SIGNAL_CATALOGUE.items() if spec.kind == SignalKind.CUMULATIVE]
+    rows = session.scalars(select(m.SensorMeasurement).where(m.SensorMeasurement.property_id == property_id,
+                                                             m.SensorMeasurement.signal.in_(cumulative),
+                                                             m.SensorMeasurement.source_ref.like("%#statistics"))).all()
+    for r in rows:
+        session.delete(r)
+    extra["migrations"] = sorted(done | {"lts_sum_v3"})
+    extra["force_full_backfill"] = True
+    prop.extra = extra
+    session.flush()
+    return len(rows)
+
+
+def recent_event_messages(session: Session, property_id: int, since: datetime) -> set[str]:
+    return set(session.scalars(select(m.DataQualityEvent.message).where(m.DataQualityEvent.property_id == property_id,
+                                                                         m.DataQualityEvent.ts >= since)).all())

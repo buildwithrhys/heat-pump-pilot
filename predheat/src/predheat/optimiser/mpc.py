@@ -249,8 +249,9 @@ def build_mpc_plan(inp: MPCInputs, now: datetime, model_notes: list[str] | None 
                 reason = (f"Heat pump off; the house drifts from {slots[i-1]['t_in'] if i else inp.t_in0:.1f} to {run[-1]['t_in']:.1f} degC on stored heat "
                           f"while electricity is {rate:.1f} p/kWh, staying inside the {res['comfort_band'][0]:.0f} to {res['comfort_band'][1]:.0f} degC band.")
                 kind = "coast_space"
+            boost_saving = round(nxt_rate - rate, 2) if (mode == "boost" and nxt_rate and nxt_rate > rate + 0.5) else None
             actions.append(PlanAction(kind, run[0]["start"], run[-1]["end"], round(rate, 2), reason,
-                                      saving_p_per_kwh=round(nxt_rate - rate, 2) if (mode == "boost" and nxt_rate) else None))
+                                      saving_p_per_kwh=boost_saving, saving_basis="vs_dear_period" if boost_saving else None))
         i = j + 1
     actions += schedule_hot_water(inp, now)
     actions.sort(key=lambda a: a.start)

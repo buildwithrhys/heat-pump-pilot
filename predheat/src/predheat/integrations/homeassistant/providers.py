@@ -180,7 +180,9 @@ class HATelemetryProvider:
                 t0 = _ts(row["start"])
                 t1 = _ts(row["end"]) if row.get("end") is not None else t0 + timedelta(hours=1)
                 if spec.kind.value == "cumulative":
-                    val = row.get("state")
+                    # "sum" is Home Assistant's own running total across daily resets; "state" restarts
+                    # every midnight for myVAILLANT's daily figures, so "sum" is the series to difference.
+                    val = row.get("sum") if row.get("sum") is not None else row.get("state")
                     ts = min(t1, now)
                 else:
                     val = row.get("mean")
@@ -190,8 +192,9 @@ class HATelemetryProvider:
                 # statistics rows carry their own source tag: they may sit on a different baseline
                 # from the live sensor (HA restates and re-bases long-term statistics), so they
                 # must never be differenced against live readings.
+                tag = "#statistics_sum" if spec.kind.value == "cumulative" and row.get("sum") is not None else "#statistics"
                 out.append(Measurement(signal=m.signal, ts=ts, value=float(val) * m.unit_scale,
-                                       quality=m.quality, provenance=m.provenance, source_ref=f"{eid}#statistics"))
+                                       quality=m.quality, provenance=m.provenance, source_ref=f"{eid}{tag}"))
         return out
 
     async def health(self) -> ProviderHealth:

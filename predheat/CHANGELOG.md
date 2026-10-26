@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.1
+
+Fixes for wrong figures found on the pilot. Each has a test that failed before the fix.
+
+- **Space heating heat was mostly lost (COP 0.15 over 7 days).** Root cause: the plausibility guard added in 0.2.3 rejected any rise faster than 25 kWh per hour since the previous reading. myVAILLANT publishes hourly figures one to two hours late and sometimes several at once, minutes apart; a 2 kWh heat lump three minutes after the last update looked like 40 kWh per hour and was thrown away, while the electricity lumps (4.7 times smaller) mostly passed. Each counter now has a profile (how fast it can rise, how late its data arrives, whether it is a daily total): late lumps are accepted and spread over the time before they arrived; a daily total that drops across local midnight is a reset even when the first new figure is large; a reading below the running maximum is a restatement and never counted twice.
+- **Heat must add up.** Free heat from outside air now comes from the earned-environment sensors. Each day is checked: heat delivered must equal electricity plus outside air within 10%. Days that fail are flagged and left out of efficiency, cost-of-heat and gas comparison figures; a COP below 1 is never shown.
+- **Whole-home import inflated.** A step across a long hole in the readings could be counted as consumption. For meters, a rise across a gap of more than two hours is no longer attributed, a rise faster than a 100 A supply allows is discarded, and every discard is logged as a data quality event. History is now fetched using Home Assistant's running sum, which handles daily resets; old history rows taken from the restarting daily figure are removed once and the full 60 days are fetched again.
+- **Tariff replay did not reconcile.** "What you paid" priced only the half-hours with a stored price but divided by all the kWh, so the effective rate was understated. Now every tariff, including yours, is priced on exactly the same half-hours, the share covered is shown, your own tariff's row uses your actual prices including Intelligent Octopus slots, and a reconciliation compares your tariff's standard rates with what you paid. A tariff is only called cheaper than what you paid if it is. The cheap window was already applied in UK local time; a test now proves it across the October clock change.
+- **Annual estimate.** The climate comes from the tariff region (K is south west and south Wales), only days with complete, plausible import count, no estimate is shown until there are 14 of them, and with solar present it is labelled an upper estimate because solar is not modelled.
+- **Plan text.** Planned (unconfirmed) Intelligent Octopus slots are priced at the standard rate when planning, and a future slot the integration has already re-priced is treated as planned until it starts, so cheap windows and hot water slots line up with the price chart. A coast no longer claims a saving; each saving says what it is measured against.
+- **Days without data** show "no data", are left out of totals and averages, and the period shows how many days it covers.
+- **Download diagnostics** on System health: raw readings, the half-hours derived from them by this release and by 0.3.0, everything discarded and why, daily totals and the daily heat balance for the last 30 days.
+
 ## 0.3.0
 
 - The plan now runs 48 hours ahead when prices allow, and every recorded plan is backtested: the cost the model expected for the heating is compared with what it actually cost at the prices PredHeat had at the time. The result sits under Forecast accuracy on System health.

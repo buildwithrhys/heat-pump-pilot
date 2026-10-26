@@ -1,6 +1,6 @@
 import { ResponsiveContainer, Sankey, Tooltip } from "recharts";
 import type { Costs } from "../api";
-import { GLOSSARY } from "../glossary";
+import { GLOSSARY, Term } from "../glossary";
 
 const css = (v: string) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const kwh = (v: number, dp = 1) => v.toLocaleString("en-GB", { minimumFractionDigits: dp, maximumFractionDigits: dp });
@@ -18,14 +18,19 @@ export function EnergyFlow({ costs, title, days = 1 }: { costs: Costs; title: st
   const other = Math.max(hpElec - shElec - dhwElec, 0); // standby + backup heater
   const shHeat = costs.space_heating.kwh_heat ?? 0;
   const dhwHeat = costs.hot_water.kwh_heat ?? 0;
-  const envSh = shHeat - shElec;
-  const envDhw = dhwHeat - dhwElec;
+  // the outside-air sensors when the heat pump reports them, else heat minus electricity
+  const envSh = costs.space_heating.kwh_env ?? shHeat - shElec;
+  const envDhw = costs.hot_water.kwh_env ?? dhwHeat - dhwElec;
   const imp = costs.whole_home_import.plausible === false ? 0 : costs.whole_home_import.kwh;
   const gridToHp = imp > 0 ? Math.min(hpElec, imp) : hpElec;
   const onsite = imp > 0 ? Math.max(hpElec - imp, 0) : 0;
   const freeAir = envSh + envDhw;
 
   if (hpElec < 0.05) return <p className="muted">No heat pump energy recorded for this period yet.</p>;
+  const sb = costs.space_heating.balance;
+  if (sb && sb.status === "inconsistent") {
+    return <p className="note warn">The heat pump's figures for this period do not add up yet: heat delivered should equal electricity used plus heat from the outside air, and they differ by more than 10%. This usually means hourly figures arrived late or were lost. The diagram returns once a day's figures add up.<Term k="balance_check" /></p>;
+  }
   const limit = 200 * Math.max(days, 1);
   const checks: [string, number][] = [["Electricity to the heat pump", hpElec], ["Free heat from outside air", freeAir], ["Space heating", shHeat], ["Hot water", dhwHeat], ["Standby and backup", other]];
   const bad = checks.find(([, v]) => v > limit || v < -0.05);

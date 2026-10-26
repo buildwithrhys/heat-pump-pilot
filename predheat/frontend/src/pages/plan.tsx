@@ -32,7 +32,7 @@ export function PlanList({ plan, compact = false, skipKey }: { plan: ShadowPlan;
             <tr key={i}>
               <td style={{ whiteSpace: "nowrap" }}>{when(a.start, a.end)}</td>
               <td style={{ whiteSpace: "nowrap" }}><span className={`tag ${a.kind}`}>{a.label}</span></td>
-              {!compact && <td>{a.rate_p == null ? "–" : `${a.rate_p.toFixed(1)}p per kWh`}{a.saving_p_per_kwh ? <span title={tip("saving_vs")}> (about {a.saving_p_per_kwh.toFixed(0)}p per kWh cheaper than the period it avoids)</span> : ""}</td>}
+              {!compact && <td>{a.rate_p == null ? "–" : `${a.rate_p.toFixed(1)}p per kWh`}{a.kind === "coast_space" ? <span className="muted" title={tip("coast_rate")}> (dear rate, avoided by the earlier pre-heat)</span> : a.saving_p_per_kwh && a.saving_basis === "vs_dear_period" ? <span title={tip("saving_vs")}> (about {a.saving_p_per_kwh.toFixed(0)}p per kWh cheaper than the dear period it prepares for)</span> : a.saving_p_per_kwh && a.saving_basis === "vs_average" ? <span> (about {a.saving_p_per_kwh.toFixed(0)}p per kWh below your average price over the plan)</span> : ""}</td>}
               <td className="muted">{a.reason}</td>
             </tr>
           ))}

@@ -29,7 +29,7 @@ def test_heat_loss_recovers_simulator_ground_truth(tmp_path):
     assert ov["heat_loss"]["status"] == "ok"
     app = create_app(settings, platform=p, poll=False)
     with TestClient(app) as c:
-        assert c.get("/api/heat-loss?days=5").json()["status"] in ("ok", "not_identified", "insufficient_data")
+        assert c.get("/api/heat-loss?days=5").json()["status"] in ("ok", "waiting")
 
 
 def test_building_model_is_persisted_once_per_window(tmp_path):
