@@ -13,9 +13,35 @@ configuration:
     description: >-
       "monitor" records and prices your energy use, learns the house's heat loss and shows what
       PredHeat would do, but keeps nothing beyond the readings. "shadow" does the same and also saves
-      every 24-hour plan it produces, so the advice can later be scored against what actually
-      happened. Neither mode controls your heating. Active control does not exist in this release and
-      cannot be switched on from here.
+      every 24-hour plan it produces, so the advice can be scored against what actually happened.
+      "balanced" and "max_savings" allow PredHeat to act on the plan by moving your room setpoint up
+      or down by a small amount (balanced: up to the maximum offset below; max_savings: up to one and
+      a half times it, capped at 2 degrees). They only act when "Allow control" is also on and a
+      climate entity is named, and every cycle re-checks that the model is confident, the readings
+      are fresh and you have not changed the setpoint yourself.
+  control_enabled:
+    name: Allow control
+    description: >-
+      Off by default. Switch on only after PredHeat has run in shadow mode for at least a week, the
+      heat loss figure shows 50% confidence or more, and the forecast accuracy on the System health
+      tab is under about 0.5 degrees. When on, together with an operating mode of balanced or
+      max_savings and a climate entity below, PredHeat will change your room setpoint by small
+      offsets according to its plan. It hands the setpoint back if the data goes stale, if you change
+      the thermostat yourself (it then waits four hours), if the house falls below the comfort band,
+      or when the add-on stops. Every change is written to the control log.
+  control_climate_entity:
+    name: Climate entity to control
+    description: >-
+      The Home Assistant climate entity for the heating zone, for example
+      climate.house_zone_1_circuit_0_climate from myVAILLANT. Find it under Settings, Devices and
+      services, Entities. PredHeat only ever calls climate.set_temperature on this one entity. Leave
+      empty to keep control impossible.
+  control_max_offset_c:
+    name: Maximum setpoint offset (degrees)
+    description: >-
+      The most PredHeat may move the setpoint above or below your own setting. 1.0 is a sensible
+      start. Larger values save more on time-of-use tariffs but let the house drift further. Values
+      above 2.0 are not accepted.
   poll_seconds:
     name: Collection interval (seconds)
     description: >-
@@ -28,6 +54,17 @@ configuration:
       How much detail appears in the add-on's Log tab. "info" is normal. Use "debug" if something is
       not working and you want to see every request to Home Assistant, then set it back, as debug
       logs are large.
+  gas_price_p_per_kwh:
+    name: Gas unit price (pence per kWh)
+    description: >-
+      Used only for the "same heat on gas" comparison on the Energy costs tab. Enter the gas unit
+      rate you would pay, including VAT. The default is the Great Britain price cap rate at the time
+      of release. The comparison is a modelled what-if and is labelled as such.
+  boiler_efficiency:
+    name: Gas boiler efficiency (0.5 to 1.0)
+    description: >-
+      Seasonal efficiency of the gas boiler the comparison assumes. 0.85 is typical for a modern
+      condensing boiler in real use; older boilers are nearer 0.75.
   latitude:
     name: Latitude (optional)
     description: >-

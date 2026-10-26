@@ -32,9 +32,19 @@ export interface CostBlock {
   prices_complete?: boolean;
 }
 
+export interface GasEquivalent {
+  kwh_gas: number;
+  cost_pence: number;
+  price_p_per_kwh: number;
+  boiler_efficiency: number;
+  saving_pence: number;
+  note: string;
+}
+
 export interface Costs {
   period: { start: string; end: string };
   tariff_code: string | null;
+  gas_equivalent: GasEquivalent;
   space_heating: CostBlock;
   hot_water: CostBlock;
   auxiliary: CostBlock;
@@ -65,14 +75,60 @@ export interface NextAction {
   state?: "now" | "upcoming";
 }
 
+export interface PredictedSlot {
+  start: string;
+  t_in: number;
+  t_in_baseline: number;
+  heat_kw: number;
+  heat_kw_baseline: number;
+  rate_p: number;
+  t_out: number;
+  cost_p: number;
+  mode: string;
+}
+
 export interface ShadowPlan {
-  status: "indicative" | "not_available";
+  status: "indicative" | "model_based" | "not_available";
   reason: string;
   actions: PlanAction[];
   next_action?: NextAction;
   assumptions?: string[];
   horizon_start?: string;
   horizon_end?: string;
+  predicted?: PredictedSlot[];
+  cost?: { optimised_p: number; baseline_p: number; saving_p: number } | null;
+  model?: Record<string, string | number | null> | null;
+}
+
+export interface HeatPump {
+  status: "ok" | "early" | "prior";
+  cop_at_7: number;
+  cop_at_2: number;
+  cop_at_minus_2: number;
+  slope_per_degc: number;
+  observed_mean_cop: number | null;
+  samples: number;
+  confidence: number;
+  rmse: number | null;
+  t_range: (number | null)[];
+  capacity_kw: number;
+  capacity_source: string;
+  notes: string[];
+}
+
+export interface ForecastAccuracy {
+  status: "ok" | "waiting" | "no_data";
+  reason?: string;
+  runs: number;
+  points: number;
+  rmse_baseline_c?: number;
+  mae_baseline_c?: number;
+  bias_baseline_c?: number;
+  rmse_optimised_c?: number;
+  target_rmse_c?: number;
+  meets_target?: boolean;
+  by_run?: { issued_at: string; points: number; rmse_baseline_c: number; bias_baseline_c: number }[];
+  note?: string;
 }
 
 export interface HeatLoss {
@@ -91,6 +147,49 @@ export interface HeatLoss {
   confidence?: number;
   survey_w_per_k?: number | null;
   notes?: string[];
+}
+
+export interface TariffResult {
+  code: string;
+  name: string;
+  description?: string;
+  replayable: boolean;
+  unit_pence?: number;
+  standing_pence?: number;
+  total_pence?: number;
+  kwh?: number;
+  days?: number;
+  cheap_share?: number | null;
+  effective_p_per_kwh?: number | null;
+  annualised_pounds?: number;
+  requires?: string[];
+  note?: string;
+}
+
+export interface TariffComparison {
+  status: "ok" | "no_data";
+  reason?: string;
+  days: number;
+  period?: { start: string; end: string };
+  source?: string;
+  kwh?: number;
+  rates_as_of?: string;
+  actual?: { code: string; name: string; unit_pence: number; standing_pence: number; total_pence: number; kwh: number; prices_complete: boolean; effective_p_per_kwh: number; difference_vs_best_pence?: number } | null;
+  results: TariffResult[];
+  caveats?: string[];
+}
+
+export interface ControlStatus {
+  configured: boolean;
+  reason: string;
+  entity?: string | null;
+  holding: boolean;
+  occupant_setpoint_c?: number | null;
+  commanded_c?: number | null;
+  override_until?: string | null;
+  last?: { status: string; reason: string; target_c: number | null; mode: string | null } | null;
+  max_offset_c?: number;
+  mode?: string;
 }
 
 export const MODE_LABEL: Record<string, string> = { monitor: "Monitor mode", shadow: "Shadow mode", balanced: "Balanced", max_savings: "Max savings" };
@@ -113,6 +212,7 @@ export interface Overview {
   plan: ShadowPlan;
   next_action: NextAction;
   heat_loss: HeatLoss;
+  heat_pump: HeatPump;
 }
 
 export interface DailyRow {
@@ -122,6 +222,7 @@ export interface DailyRow {
   heat_pump_total: { kwh_electric: number; cost_pence: number };
   whole_home_import: { kwh: number; cost_pence: number };
   standing_charge_pence: number;
+  gas_equivalent: GasEquivalent;
 }
 
 export interface Timeline {
@@ -146,6 +247,8 @@ export interface SystemHealth {
   missing_for_thermal_model: string[];
   recent_events: { ts: string; severity: string; source: string; message: string }[];
   record_counts: Record<string, number>;
+  forecast_accuracy: ForecastAccuracy;
+  control: ControlStatus;
 }
 
 export const api = {
@@ -154,6 +257,10 @@ export const api = {
   timeline: (hours = 48) => get<Timeline>(`/api/timeline?hours=${hours}`),
   system: () => get<SystemHealth>("/api/system"),
   heatLoss: (days = 14) => get<HeatLoss>(`/api/heat-loss?days=${days}`),
+  heatPump: (days = 30) => get<HeatPump>(`/api/heat-pump?days=${days}`),
+  accuracy: (days = 7) => get<ForecastAccuracy>(`/api/accuracy?days=${days}`),
+  tariffs: (days = 30) => get<TariffComparison>(`/api/tariffs?days=${days}`),
+  controlStatus: () => get<ControlStatus>("/api/control-status"),
 };
 
 export const pounds = (pence: number | null | undefined) =>

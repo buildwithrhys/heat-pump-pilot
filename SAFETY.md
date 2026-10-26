@@ -29,3 +29,10 @@ Only one automation may own heating setpoints. While EnergyPLUS retains control,
 ## Credentials
 
 Tokens and API keys are read from environment variables, held as `SecretStr`, never logged and never written to the database.
+
+
+## Controlled live optimisation (from 0.2.0)
+
+Control is implemented and off by default. It becomes possible only when three add-on options are set together: `control_enabled`, an operating mode of `balanced` or `max_savings`, and `control_climate_entity`. The add-on entry point forces control off if any of the three is missing.
+
+The only write path is `predheat.integrations.homeassistant.control.HAControlAdapter.set_target`, which calls `climate.set_temperature` on that one entity. It is imported solely by `predheat.control.Controller`, which on every cycle checks, in order: configuration, a readable current target, no manual change since the last command (otherwise release and back off for `control_override_hours`), a model-based plan, building model confidence of at least 50%, an indoor reading under 30 minutes old, and an indoor temperature not already below the comfort band. Any failure while holding an offset restores the occupant's own setpoint. Changes are limited to `control_max_offset_c` (max 2 °C), at most one per 25 minutes. Every proposal, write, failure and release is appended to `control_execution_log`. The API has no endpoint that enables control or writes to equipment.

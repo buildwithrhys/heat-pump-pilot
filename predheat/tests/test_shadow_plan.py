@@ -81,7 +81,7 @@ def test_shadow_mode_records_each_plan(tmp_path):
         assert s.query(m.OptimisationRun).count() == before + 1
         assert all(run.slots for run in s.query(m.OptimisationRun).all())
     ov = p.overview()
-    assert ov["plan"]["status"] == "indicative"
+    assert ov["plan"]["status"] in ("indicative", "model_based")
     assert ov["next_action"]["kind"] != "none"
     assert p.timeline(24)["optimisation"]["actions"]
 
@@ -98,4 +98,4 @@ def test_monitor_mode_shows_plan_but_records_nothing(tmp_path):
     asyncio.run(p.poll_once())
     with session_scope(settings.database_url) as s:
         assert s.query(m.OptimisationRun).count() == 0
-    assert p.overview()["plan"]["status"] == "indicative"
+    assert p.overview()["plan"]["status"] in ("indicative", "model_based")

@@ -1,5 +1,7 @@
 # Roadmap
 
+Status at 0.2.0 (26 October 2026): Phases 0 to 6 have working software in the add-on. Phase 2 reports, Phase 3 models, the Phase 4 optimiser, Phase 5 control and Phase 6 replay are all first implementations that now need live running time against the pilot to earn their exit criteria; the exit tests below remain the bar. Phase 7 is commercial work, not code.
+
 Each phase ends with working software and a milestone report covering what was implemented, tested, works, remains unverified, and what blocks the next step. Live equipment control is impossible before Phase 5 and remains off by default afterwards.
 
 ## Phase 0: Technical discovery (complete, 25 October 2026)

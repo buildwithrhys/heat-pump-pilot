@@ -11,10 +11,15 @@ export function when(start: string, end: string): string {
 }
 
 export function PlanList({ plan, compact = false }: { plan: ShadowPlan; compact?: boolean }) {
-  if (plan.status !== "indicative") return <p className="muted">{plan.reason}</p>;
+  if (plan.status === "not_available") return <p className="muted">{plan.reason}</p>;
   if (plan.actions.length === 0) return <p className="muted">Nothing worth shifting in the next 24 hours. {plan.reason}</p>;
   return (
     <div className="tablewrap">
+      {plan.cost && (
+        <p className="muted" style={{ margin: "0 0 10px", fontSize: 13 }}>
+          {plan.status === "model_based" ? "Model-based plan. " : ""}Space heating about £{(plan.cost.optimised_p / 100).toFixed(2)} optimised against £{(plan.cost.baseline_p / 100).toFixed(2)} for a plain thermostat, saving {plan.cost.saving_p.toFixed(0)}p over 24 hours.
+        </p>
+      )}
       <table>
         <thead>
           <tr><th>When</th><th>Action</th>{!compact && <th>Rate</th>}<th>Why</th></tr>

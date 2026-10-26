@@ -1,6 +1,6 @@
 # PredHeat
 
-PredHeat watches your heat pump, learns how your house holds heat, and works out the cheapest way to keep it warm on your tariff. In this release it only watches and advises: it never changes a setting on your heating.
+PredHeat watches your heat pump, learns how your house holds heat, and works out the cheapest way to keep it warm on your tariff. Out of the box it only watches and advises. Control is a separate, explicit opt-in described below.
 
 ## Getting started
 
@@ -18,7 +18,9 @@ The first start discovers your entities and backfills a week of history, which t
 
 **Forecast.** The next 24 hours of advice with a reason for each line, and the inputs behind it: prices by certainty (guaranteed off-peak, confirmed and planned Intelligent Octopus dispatches, peak), the weather forecast and the solar forecast.
 
-**System health.** Data providers, integrations discovered, every signal with its source entity and freshness, and recent data quality events.
+**Tariffs.** Your own consumption replayed on Intelligent Octopus Go, Go, Cosy and Flexible with indicative published rates, ranked by cost, next to what you actually paid. Add or correct tariffs by placing a `tariffs.yaml` in the add-on's data directory (`/addon_configs/<slug>/` or the `/data` folder inside the add-on).
+
+**System health.** Data providers, integrations discovered, every signal with its source entity and freshness, forecast accuracy of recorded plans, control status, and recent data quality events.
 
 The API that feeds the dashboard is documented at `/docs` on the same page address.
 
@@ -34,13 +36,25 @@ It needs at least one full day of data before it reports, and the range narrows 
 
 ## What PredHeat would do
 
-The plan is rule-based in this release and every line explains itself. It looks for the cheapest window in the next 24 hours and the expensive periods, then proposes to:
+Until the building model is identified, the plan is rule-based: hot water at the end of the cheapest window, a pre-heat before expensive periods when the forecast says heating is needed, and a coast through them. Every line explains itself and says it is rule-based.
 
-- **Heat hot water** in the last hour of the cheapest window, so the cylinder is hot for the morning with the least standing loss.
-- **Pre-heat the house** by about 1 °C in the cheapest 90 minutes before an expensive period, when the forecast says heating will be needed.
-- **Let the house coast** for up to three hours into the expensive period on the stored heat, then resume.
+Once the heat loss figure reaches 30% confidence, the model-based optimiser takes over. For every half hour of the next 24 it chooses how hard to run the heat pump so that the electricity bill is lowest while the indoor temperature stays inside a comfort band of one degree either side of your setpoint and the house ends the day no colder than the setpoint. It uses the fitted heat loss and thermal capacity, the heat pump's COP at the forecast outdoor temperature, and the half-hourly prices. The Forecast tab shows the predicted indoor temperature for the plan and for a plain thermostat, and the saving between the two. Hot water is scheduled into the cheapest slots per unit of delivered heat before the morning.
 
-If prices are flat, it says so and recommends running normally. In **shadow** mode each plan is saved, so once enough history exists the advice can be scored against what the heating actually did.
+In **shadow** mode each plan is saved. Once its horizon has passed, the model's prediction of indoor temperature is scored against what the sensor measured, and the result appears on the System health tab. The target is 0.5 °C RMSE.
+
+## Letting PredHeat control the heating
+
+Control is off by default and needs three things set together on the Configuration page: **Allow control**, an operating mode of **balanced** or **max_savings**, and the **climate entity** for the heating zone. If any one is missing, nothing is ever written.
+
+When all three are set, on every collection cycle PredHeat reads the current target temperature of the climate entity and, if the plan says to pre-heat or coast right now, moves it up or down by the configured offset (balanced: the offset; max_savings: one and a half times it, capped at 2 °C). Otherwise it leaves your own setpoint in place. It hands the setpoint back and logs why when:
+
+- the readings are stale (indoor temperature older than 30 minutes),
+- the building model is below 50% confidence or the plan is not model-based,
+- you change the thermostat yourself (it then waits four hours before acting again),
+- the house is already below the comfort band,
+- the add-on stops.
+
+Every proposal, change, failure and release is written to the control log, and the System health tab shows what it is holding right now. Suggested sequence: run in shadow for a week, check the heat loss confidence and forecast accuracy, then switch to balanced.
 
 ## Options
 
@@ -49,7 +63,9 @@ Every option has a description on the Configuration page. In brief:
 | Option | Default | Meaning |
 |---|---|---|
 | Data source | `home_assistant` | Live data from this instance, or `simulated` for a synthetic house to explore the dashboard. |
-| Operating mode | `monitor` | `monitor` records, prices and advises. `shadow` also saves each plan for later comparison. Neither controls anything. |
+| Operating mode | `monitor` | `monitor` records, prices and advises. `shadow` also saves each plan for scoring. `balanced` and `max_savings` allow control when the options below are also set. |
+| Allow control, climate entity, maximum offset | off, empty, 1.0 | The three settings that together permit PredHeat to move your setpoint. See "Letting PredHeat control the heating". |
+| Gas unit price, boiler efficiency | 6.24p, 0.85 | For the "same heat on gas" comparison. |
 | Collection interval | 300 s | How often readings, prices and forecasts are refreshed. |
 | Log level | `info` | Use `debug` only while diagnosing a problem. |
 | Latitude, longitude | from Home Assistant | Override the location used for solar geometry. |
@@ -58,7 +74,7 @@ Every option has a description on the Configuration page. In brief:
 
 ## Safety
 
-PredHeat is read-only by design. There is no code in it that writes to heating equipment, the `/api/control` endpoints always answer 403, and the add-on forces control off regardless of configuration. It reads Home Assistant through the Supervisor with the token Home Assistant issues to the add-on, so there is no long-lived access token to create or store.
+PredHeat reads Home Assistant through the Supervisor with the token Home Assistant issues to the add-on, so there is no long-lived access token to create or store. Exactly one module can write to Home Assistant, and it can do exactly one thing: set the target temperature of the single climate entity you name. It is only loaded when control is configured, every write goes through the guard chain above, and the API cannot enable control: the `/api/control` endpoints always answer 403. See `SAFETY.md` in the repository.
 
 ## Data
 

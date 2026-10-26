@@ -33,9 +33,9 @@ def test_options_map_to_env_and_override_existing():
     assert "HOME" not in env
 
 
-def test_control_is_always_forced_off():
+def test_control_is_off_unless_explicitly_configured():
     env = env_from_options({}, None, Path("/data"), existing={"PREDHEAT_CONTROL_ENABLED": "true"})
-    assert env["PREDHEAT_CONTROL_ENABLED"] == "false"
+    assert env["PREDHEAT_CONTROL_ENABLED"] == "false"  # environment alone cannot switch it on
     assert "PREDHEAT_HA_TOKEN" not in env  # no supervisor, nothing invented
 
 

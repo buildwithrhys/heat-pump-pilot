@@ -4,8 +4,9 @@ import OverviewPage from "./pages/OverviewPage";
 import CostsPage from "./pages/CostsPage";
 import ForecastPage from "./pages/ForecastPage";
 import SystemPage from "./pages/SystemPage";
+import TariffsPage from "./pages/TariffsPage";
 
-const TABS = ["Overview", "Energy costs", "Forecast", "System health"] as const;
+const TABS = ["Overview", "Energy costs", "Forecast", "Tariffs", "System health"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function App() {
@@ -22,7 +23,7 @@ export default function App() {
         <h1>PredHeat</h1>
         {meta && (
           <span className="mode">
-            {meta.data_mode === "simulated" ? "Simulated data" : "Live data"} · {MODE_LABEL[meta.operating_mode] ?? meta.operating_mode} · {meta.control_enabled ? "control ENABLED" : "read-only"}
+            {meta.data_mode === "simulated" ? "Simulated data" : "Live data"} · {MODE_LABEL[meta.operating_mode] ?? meta.operating_mode} · {meta.control_enabled ? "control active" : "read-only"}
           </span>
         )}
       </header>
@@ -34,6 +35,7 @@ export default function App() {
       {tab === "Overview" && <OverviewPage />}
       {tab === "Energy costs" && <CostsPage />}
       {tab === "Forecast" && <ForecastPage />}
+      {tab === "Tariffs" && <TariffsPage />}
       {tab === "System health" && <SystemPage />}
     </div>
   );

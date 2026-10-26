@@ -4,7 +4,7 @@
 
 It runs as a Home Assistant add-on. Give it a few days and it will tell you your home's heat loss in plain numbers, show you exactly where every kilowatt-hour went and what it cost, and lay out what it would do differently on your tariff: when to heat the hot water, when to warm the house ahead of expensive electricity, and when to let it coast.
 
-In this release PredHeat only watches and advises. It never changes a setting on your heating.
+Out of the box PredHeat only watches and advises. Letting it move your setpoint is a separate, explicit opt-in with a guard chain around it.
 
 ![Overview](docs/screenshots/desktop-Overview.png)
 
@@ -14,7 +14,11 @@ In this release PredHeat only watches and advises. It never changes a setting on
 
 **Where the energy went.** A flow diagram shows electricity coming in from the grid, solar or battery, the free heat the pump pulled from the outside air, and the heat that went into space heating and hot water. Costs are priced slot by slot at the tariff rate in force at the time, including Intelligent Octopus dispatch windows.
 
-**What PredHeat would do.** A 24-hour plan on your real prices and weather: reheat the cylinder at the end of the cheap window, pre-heat before the expensive period, coast through it. Every line says why. In shadow mode each plan is saved so the advice can be scored against what actually happened.
+**What PredHeat would do.** A 24-hour plan on your real prices and weather. Once the house model is learned it is a proper optimisation: every half hour's heat output chosen to minimise cost inside a comfort band, with the predicted indoor temperature drawn against a plain thermostat and the saving stated. Every line says why. In shadow mode each plan is saved and scored against what the sensors measured.
+
+**Which tariff suits you.** Your own consumption replayed on Intelligent Go, Go, Cosy and Flexible, ranked, next to what you actually paid, and the same heat priced on gas.
+
+**Control, when you are ready.** Switch on balanced mode, allow control and name the climate entity, and PredHeat nudges the setpoint by up to a degree according to the plan. It hands the setpoint back on stale data, a manual change, a cold house or shutdown, and logs everything.
 
 **System health.** Which Home Assistant entities were discovered for each signal, how fresh they are, and what is missing.
 
@@ -48,13 +52,13 @@ Any heat pump, tariff, weather and solar source that is already in Home Assistan
 The add-on's configuration page explains every option. The two that matter:
 
 - **Data source**: `home_assistant` for live data, `simulated` to explore the dashboard with a synthetic house.
-- **Operating mode**: `monitor` records, prices and advises. `shadow` also saves every plan it produces for later comparison. Neither controls anything.
+- **Operating mode**: `monitor` records, prices and advises. `shadow` also saves every plan for scoring. `balanced` and `max_savings` allow control, together with "Allow control" and a climate entity.
 
 Full details are in [predheat/DOCS.md](predheat/DOCS.md).
 
 ## Safety
 
-There is no code path that writes to heating equipment. The control endpoints always return 403 and the add-on forces control off whatever the configuration says. See [SAFETY.md](SAFETY.md).
+One module can write to Home Assistant and it can do one thing: set the target of the single climate entity you name. It is loaded only when control is configured, runs a guard chain on every cycle, and cannot be enabled through the API. See [SAFETY.md](SAFETY.md).
 
 ## For developers
 

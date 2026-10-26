@@ -55,6 +55,10 @@ def create_app(settings: Settings | None = None, platform: Platform | None = Non
             stop.set()
             if task:
                 task.cancel()
+            try:
+                await p.release_control("add-on stopping")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("release on shutdown failed: %s", exc)
 
     app = FastAPI(title="PredHeat", version=__version__, lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET"], allow_headers=["*"])
@@ -106,14 +110,46 @@ def create_app(settings: Settings | None = None, platform: Platform | None = Non
         with session_scope(p.settings.database_url) as s:
             return p.thermal_estimate(s, days=days)
 
+    @app.get("/api/heat-pump")
+    async def heat_pump(days: int = Query(30, ge=1, le=365)):
+        """Fitted COP model and observed capacity. Read-only."""
+        p = plat()
+        from ..db import session_scope
+
+        with session_scope(p.settings.database_url) as s:
+            return p.heat_pump_estimate(s, days=days)
+
+    @app.get("/api/accuracy")
+    async def accuracy(days: int = Query(7, ge=1, le=90)):
+        """Indoor temperature forecast accuracy of recorded plans."""
+        p = plat()
+        from ..db import session_scope
+
+        with session_scope(p.settings.database_url) as s:
+            return p.forecast_accuracy(s, days=days)
+
     @app.post("/api/poll")
     async def poll():
         """Trigger a collection cycle (read-only against equipment)."""
         return await plat().poll_once()
 
+    @app.get("/api/tariffs")
+    async def tariffs(days: int = Query(30, ge=7, le=365)):
+        """Replay stored consumption on tariff templates. Read-only, indicative."""
+        p = plat()
+        from ..db import session_scope
+
+        with session_scope(p.settings.database_url) as s:
+            return p.compare_tariffs(s, days=days)
+
+    @app.get("/api/control-status")
+    async def control_status():
+        """Whether PredHeat is allowed to act, and what it last did. Read-only."""
+        return plat().control_status()
+
     @app.api_route("/api/control/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
     async def control_blocked(path: str):
-        return JSONResponse(status_code=403, content={"detail": "Active control is disabled. See SAFETY.md. Phase 5 requires explicit authorisation."})
+        return JSONResponse(status_code=403, content={"detail": "Control is configured only through the add-on options, never through the API. See SAFETY.md."})
 
     @app.get("/api/ground-truth")
     async def ground_truth():

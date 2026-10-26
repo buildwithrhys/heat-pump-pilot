@@ -19,9 +19,9 @@ from ..db import models as m
 from ..db.session import as_utc
 from ..domain import CapabilityReport, Measurement, Provenance, Quality, RateInterval, Signal
 from ..integrations.base import ProviderHealth
-from ..model import fit_rc_model, survey_to_coefficient
-from ..optimiser import build_shadow_plan
-from ..pricing import PriceClass, SlotPrice, build_rate_book, classify_slots, standing_charge_for_period
+from ..model import COPModel, fit_cop_model, fit_rc_model, prior_cop_model, survey_to_coefficient
+from ..optimiser import MPCInputs, build_mpc_plan, build_shadow_plan
+from ..pricing import RATES_AS_OF, PriceClass, SlotPrice, build_rate_book, classify_slots, load_templates, replay, standing_charge_for_period
 from ..timeutils import LONDON, local_day_bounds, now_utc
 from . import repository as repo
 
@@ -40,6 +40,7 @@ class Platform:
     capability_report: CapabilityReport | None = None
     last_poll: dict[str, Any] = field(default_factory=dict)
     simulated_home: Any = None
+    controller: Any = None
 
     # ------------------------------------------------------------------ lifecycle
     async def bootstrap(self, backfill_days: int | None = None) -> None:
@@ -48,6 +49,8 @@ class Platform:
             prop = repo.ensure_property(s, "Pilot property", self.settings.timezone,
                                         latitude=self.settings.latitude, longitude=self.settings.longitude)
             self.property_id = prop.id
+            if self.controller is not None:
+                self.controller.property_id = prop.id
         self.capability_report = await self.telemetry.discover()
         with session_scope(self.settings.database_url) as s:
             for cap in self.capability_report.capabilities:
@@ -124,17 +127,28 @@ class Platform:
             except Exception as exc:  # noqa: BLE001
                 result["solar_error"] = str(exc)
                 repo.log_quality_event(s, self.property_id, "error", self.solar.name, str(exc))
-            if self.settings.operating_mode == OperatingMode.SHADOW:
+            if self.settings.operating_mode != OperatingMode.MONITOR:
                 try:
                     result["shadow_run_id"] = self._record_shadow_plan(s)
                 except Exception as exc:  # noqa: BLE001
                     result["shadow_error"] = str(exc)
                     repo.log_quality_event(s, self.property_id, "error", "shadow_planner", str(exc))
+            if self.controller is not None:
+                try:
+                    result["control"] = (await self._control_step(s)).status
+                except Exception as exc:  # noqa: BLE001
+                    result["control_error"] = str(exc)
+                    repo.log_quality_event(s, self.property_id, "error", "controller", str(exc))
             try:
                 result["building_model_id"] = self._refresh_building_model(s)
             except Exception as exc:  # noqa: BLE001
                 result["building_model_error"] = str(exc)
                 repo.log_quality_event(s, self.property_id, "error", "thermal_model", str(exc))
+            try:
+                result["heat_pump_model_id"] = self._refresh_heat_pump_model(s)
+            except Exception as exc:  # noqa: BLE001
+                result["heat_pump_model_error"] = str(exc)
+                repo.log_quality_event(s, self.property_id, "error", "heat_pump_model", str(exc))
         self.last_poll.update(result)
         return result
 
@@ -220,6 +234,96 @@ class Platform:
         s.flush()
         return row.id
 
+    # ------------------------------------------------------------------ tariff comparison
+    def compare_tariffs(self, s, days: int = 30, now: datetime | None = None) -> dict[str, Any]:
+        """Replay the last ``days`` of half-hourly import on each tariff template."""
+        now = now or self.clock.now()
+        today = now.astimezone(LONDON).date()
+        start, _ = local_day_bounds(today - timedelta(days=days))
+        _, end = local_day_bounds(today - timedelta(days=1))
+
+        def counter(sig: Signal):
+            rows = repo.measurements_for(s, self.property_id, sig.value, start - timedelta(hours=1), end + timedelta(hours=1))
+            return [Measurement(signal=sig, ts=as_utc(r.ts), value=r.value, quality=Quality(r.quality), provenance=Provenance(r.provenance), source_ref=r.source_ref) for r in rows]
+
+        source = "whole_home_import"
+        ints = [i for i in counter_to_intervals(counter(Signal.GRID_IMPORT_KWH), "grid_import") if start <= i.start < end]
+        if sum(i.kwh for i in ints) < 1.0:
+            source = "heat_pump_only"
+            heat_e = counter_to_intervals(counter(Signal.HP_ELEC_HEATING_KWH), "e")
+            dhw_e = counter_to_intervals(counter(Signal.HP_ELEC_DHW_KWH), "d")
+            by: dict[datetime, float] = {}
+            for i in heat_e + dhw_e:
+                if start <= i.start < end:
+                    by[i.start] = by.get(i.start, 0.0) + i.kwh
+            from ..analytics.energy_accounting import EnergyInterval
+            ints = [EnergyInterval(k, k + timedelta(minutes=30), v, Quality.MODEL_DERIVED, "hp") for k, v in sorted(by.items())]
+        triples = [(as_utc(i.start), as_utc(i.end), i.kwh) for i in ints]
+        total_kwh = sum(k for _, _, k in triples)
+        if total_kwh < 1.0:
+            return {"status": "no_data", "reason": "Not enough consumption history yet.", "days": days, "results": []}
+        # what it actually cost on the current tariff, priced slot by slot
+        tariff_code = self.last_poll.get("tariff_code")
+        actual = None
+        if tariff_code:
+            book = build_rate_book([_ri(r) for r in repo.rates_for(s, tariff_code, start, end)], tariff_code)
+            cost = 0.0
+            complete = True
+            for st, en, k in triples:
+                c, _eff, ok = book.cost_pence(st, en, k)
+                cost += c
+                complete = complete and ok
+            charges = s.query(m.TariffStandingCharge).filter_by(tariff_code=tariff_code).all()
+            from ..domain import StandingCharge
+            sc = standing_charge_for_period([StandingCharge(start=as_utc(c.start), end=as_utc(c.end), pence_per_day=c.pence_per_day, tariff_code=c.tariff_code) for c in charges], start, end)
+            actual = {"code": tariff_code, "name": "Your current tariff (actual prices)", "unit_pence": round(cost, 1), "standing_pence": round(sc, 1),
+                      "total_pence": round(cost + sc, 1), "kwh": round(total_kwh, 2), "prices_complete": complete,
+                      "effective_p_per_kwh": round(cost / total_kwh, 2)}
+        results = []
+        for t in load_templates(self.settings.data_dir):
+            if t.code == "_error":
+                results.append({"code": t.code, "name": t.name, "replayable": False, "note": t.description})
+                continue
+            if not t.replayable:
+                results.append({"code": t.code, "name": t.name, "description": t.description, "replayable": False, "note": t.note, "requires": t.requires})
+                continue
+            r = replay(t, triples)
+            r.update({"description": t.description, "replayable": True, "requires": t.requires, "note": t.note,
+                      "annualised_pounds": round(r["total_pence"] / 100 / max(r["days"], 1) * 365, 0)})
+            results.append(r)
+        ranked = sorted([r for r in results if r.get("replayable")], key=lambda r: r["total_pence"])
+        best = ranked[0] if ranked else None
+        if actual and best:
+            actual["difference_vs_best_pence"] = round(actual["total_pence"] - best["total_pence"], 1)
+        return {"status": "ok", "days": days, "period": {"start": start.isoformat(), "end": end.isoformat()}, "source": source,
+                "kwh": round(total_kwh, 2), "rates_as_of": RATES_AS_OF, "actual": actual, "results": ranked + [r for r in results if not r.get("replayable")],
+                "caveats": ["Replay of your consumption as it happened. A tariff with different cheap windows would change when PredHeat heats, so the optimised figure would be lower still.",
+                            "Unit rates are published prices for one region at the date shown; check your own region before switching.",
+                            "Exit fees, eligibility (EV, smart meter) and export rates are not included."]}
+
+    # ------------------------------------------------------------------ control
+    async def _control_step(self, s):
+        now = self.clock.now()
+        plan = self.shadow_plan(s, now)
+        latest = repo.latest_measurements(s, self.property_id)
+        r = latest.get(Signal.INDOOR_TEMPERATURE.value)
+        indoor = r.value if r else None
+        age = (now - as_utc(r.ts)) if r else None
+        est = self.thermal_estimate(s, now=now)
+        conf = est.get("confidence") if est.get("status") == "ok" else None
+        return await self.controller.step(s, now, plan, indoor, age, conf)
+
+    async def release_control(self, reason: str = "shutdown") -> None:
+        if self.controller is None:
+            return
+        with session_scope(self.settings.database_url) as s:
+            await self.controller.release(s, self.clock.now(), reason)
+
+    def control_status(self) -> dict[str, Any]:
+        if self.controller is None:
+            return {"configured": False, "reason": "no controller: control is disabled or no climate entity is configured", "holding": False}
+        return self.controller.status()
+
     # ------------------------------------------------------------------ shadow planning
     def _price_slots(self, s, start: datetime, end: datetime) -> list[SlotPrice]:
         tariff_code = self.last_poll.get("tariff_code")
@@ -240,7 +344,11 @@ class Platform:
         return s.query(m.WeatherForecast).filter_by(property_id=self.property_id, issued_at=latest_issue[0]).order_by(m.WeatherForecast.valid_at).all()
 
     def shadow_plan(self, s, now: datetime | None = None) -> dict[str, Any]:
-        """What PredHeat would do over the next 24 hours. Read-only; see optimiser.shadow."""
+        """What PredHeat would do over the next 24 hours. Read-only.
+
+        Uses the model-based optimiser once the building model is identified with
+        reasonable confidence; until then the rule-based plan, and says which.
+        """
         now = now or self.clock.now()
         start = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
         slots = self._price_slots(s, start, start + timedelta(hours=25))
@@ -248,21 +356,174 @@ class Platform:
 
         def value(sig: Signal) -> float | None:
             r = latest.get(sig.value)
-            return r.value if r else None
+            return r.value if r and r.value is not None and (now - as_utc(r.ts)) < timedelta(hours=3) else None
 
         forecast = [(as_utc(w.valid_at), w.temperature_c) for w in self._latest_weather(s) if w.temperature_c is not None]
-        return build_shadow_plan(now, slots, dhw_tank_c=value(Signal.DHW_TANK_TEMPERATURE),
-                                 dhw_setpoint_c=value(Signal.DHW_SETPOINT), outdoor_forecast=forecast)
+        est = self.thermal_estimate(s, now=now)
+        hp = self.heat_pump_estimate(s, now=now)
+        t_in0 = value(Signal.INDOOR_TEMPERATURE)
+        priced = [sp for sp in slots if not math.isnan(sp.rate_p_per_kwh) and sp.end > now][:48]
+        why_not = None
+        if est["status"] != "ok":
+            why_not = f"building model not ready ({est.get('reason', est['status'])})"
+        elif est["confidence"] < 0.3:
+            why_not = f"building model confidence {est['confidence']:.0%} is below 30%"
+        elif t_in0 is None:
+            why_not = "no fresh indoor temperature reading"
+        elif len(priced) < 12:
+            why_not = "fewer than 6 hours of prices ahead"
+        elif not forecast:
+            why_not = "no weather forecast stored"
+        if why_not:
+            plan = build_shadow_plan(now, slots, dhw_tank_c=value(Signal.DHW_TANK_TEMPERATURE),
+                                     dhw_setpoint_c=value(Signal.DHW_SETPOINT), outdoor_forecast=forecast)
+            plan["assumptions"].insert(0, f"Rule-based because {why_not}. The model-based optimiser takes over automatically.")
+            plan["model"] = {"building": est["status"], "heat_pump": hp["status"]}
+            return plan
+        prop = s.get(m.Property, self.property_id)
+        setpoint = value(Signal.INDOOR_SETPOINT) or (prop.preferred_temp_c if prop else 21.0)
+        tolerance = prop.comfort_tolerance_c if prop else 1.0
+        fc_sorted = sorted(forecast)
+
+        def t_out_at(t: datetime) -> float:
+            # nearest forecast hour; falls back to the latest outdoor reading
+            best = min(fc_sorted, key=lambda f: abs((f[0] - t).total_seconds()))
+            if abs((best[0] - t).total_seconds()) <= 5400:
+                return best[1]
+            return value(Signal.OUTDOOR_TEMPERATURE) if value(Signal.OUTDOOR_TEMPERATURE) is not None else best[1]
+
+        cop_model = COPModel(hp["model"]["a"], hp["model"]["b"])
+        inp = MPCInputs(starts=[sp.start for sp in priced], rate_p=[sp.rate_p_per_kwh for sp in priced],
+                        t_out=[t_out_at(sp.start) for sp in priced], ua_w_per_k=est["heat_loss_w_per_k"],
+                        capacity_kwh_per_k=est["capacity_kwh_per_k"] or 5.0, internal_gain_kw=est["internal_gain_kw"] or 0.0,
+                        cop_fn=cop_model.cop_at, hp_capacity_kw=hp["capacity_kw"], t_in0=t_in0, setpoint_c=setpoint,
+                        tolerance_c=tolerance, dhw_tank_c=value(Signal.DHW_TANK_TEMPERATURE), dhw_setpoint_c=value(Signal.DHW_SETPOINT))
+        notes = [f"Building model confidence {est['confidence']:.0%} from {est['samples']} half-hours; heat pump model {hp['status']} "
+                 f"({hp['samples']} hours, confidence {hp['confidence']:.0%})."]
+        plan = build_mpc_plan(inp, now, model_notes=notes)
+        plan["model"] = {"building": est["status"], "heat_pump": hp["status"], "heat_loss_w_per_k": est["heat_loss_w_per_k"],
+                         "cop_at_7": round(cop_model.cop_at(7.0), 2), "capacity_kw": hp["capacity_kw"], "setpoint_c": setpoint, "tolerance_c": tolerance}
+        return plan
+
+    # ------------------------------------------------------------------ heat pump efficiency (COP model)
+    def heat_pump_estimate(self, s, days: int = 30, now: datetime | None = None) -> dict[str, Any]:
+        """COP against outdoor temperature from hourly electricity and heat, plus observed capacity."""
+        now = now or self.clock.now()
+        start = now - timedelta(days=days)
+
+        def counter(sig: Signal):
+            rows = repo.measurements_for(s, self.property_id, sig.value, start - timedelta(hours=3), now)
+            return [Measurement(signal=sig, ts=as_utc(r.ts), value=r.value, quality=Quality(r.quality), provenance=Provenance(r.provenance), source_ref=r.source_ref) for r in rows]
+
+        elec = counter_to_intervals(counter(Signal.HP_ELEC_HEATING_KWH), "e")
+        heat = counter_to_intervals(counter(Signal.HP_HEAT_HEATING_KWH), "h")
+        e_h: dict[datetime, float] = {}
+        h_h: dict[datetime, float] = {}
+        for i in elec:
+            e_h[as_utc(i.start).replace(minute=0)] = e_h.get(as_utc(i.start).replace(minute=0), 0.0) + i.kwh
+        for i in heat:
+            h_h[as_utc(i.start).replace(minute=0)] = h_h.get(as_utc(i.start).replace(minute=0), 0.0) + i.kwh
+        t_h: dict[datetime, list[float]] = {}
+        for r in repo.measurements_for(s, self.property_id, Signal.OUTDOOR_TEMPERATURE.value, start, now):
+            if r.value is not None:
+                t_h.setdefault(as_utc(r.ts).replace(minute=0, second=0, microsecond=0), []).append(r.value)
+        hours = sorted(set(e_h) & set(h_h) & set(t_h))
+        t_out = [sum(t_h[h]) / len(t_h[h]) for h in hours]
+        model = fit_cop_model(t_out, [e_h[h] for h in hours], [h_h[h] for h in hours]) if hours else prior_cop_model()
+        half_hour_kw = sorted(i.kwh / 0.5 for i in heat if i.kwh > 0)
+        capacity = half_hour_kw[int(len(half_hour_kw) * 0.95)] if len(half_hour_kw) >= 20 else 7.0
+        capacity = float(max(3.0, min(16.0, capacity)))
+        status = "ok" if model.n_samples >= 24 else "prior" if model.n_samples == 0 else "early"
+        return {"status": status, "model_type": "cop_linear_t_out", "cop_at_7": round(model.cop_at(7.0), 2),
+                "cop_at_2": round(model.cop_at(2.0), 2), "cop_at_minus_2": round(model.cop_at(-2.0), 2),
+                "slope_per_degc": round(model.b, 3), "observed_mean_cop": round(model.observed_mean, 2) if model.observed_mean else None,
+                "samples": model.n_samples, "confidence": model.confidence, "rmse": round(model.rmse, 3) if model.rmse is not None else None,
+                "t_range": [model.t_min, model.t_max], "capacity_kw": round(capacity, 1),
+                "capacity_source": "observed 95th percentile" if len(half_hour_kw) >= 20 else "default 7 kW",
+                "window_start": start.isoformat(), "window_end": now.isoformat(), "notes": model.notes, "model": model.as_dict()}
+
+    def _refresh_heat_pump_model(self, s, min_age: timedelta = timedelta(hours=6)) -> int | None:
+        now = self.clock.now()
+        latest = s.query(m.HeatPumpModelVersion).filter_by(property_id=self.property_id).order_by(m.HeatPumpModelVersion.created_at.desc()).first()
+        if latest and now - as_utc(latest.created_at) < min_age:
+            return latest.id
+        est = self.heat_pump_estimate(s, now=now)
+        if est["status"] == "prior":
+            return latest.id if latest else None
+        row = m.HeatPumpModelVersion(property_id=self.property_id, created_at=now, model_type=est["model_type"],
+                                     parameters={"a": est["model"]["a"], "b": est["model"]["b"], "capacity_kw": est["capacity_kw"]},
+                                     confidence=est["confidence"], metrics={"samples": est["samples"], "rmse": est["rmse"], "notes": est["notes"]})
+        s.add(row)
+        s.flush()
+        return row.id
+
+    # ------------------------------------------------------------------ forecast accuracy
+    def forecast_accuracy(self, s, days: int = 7, now: datetime | None = None) -> dict[str, Any]:
+        """How well the model predicted indoor temperature in recorded plans.
+
+        The house runs its own thermostat in monitor and shadow modes, so the
+        baseline trajectory (thermostat on the model) is the one to score. The
+        optimised trajectory is reported too for completeness.
+        """
+        now = now or self.clock.now()
+        runs = (s.query(m.OptimisationRun).filter(m.OptimisationRun.property_id == self.property_id,
+                                                    m.OptimisationRun.issued_at >= now - timedelta(days=days))
+                .order_by(m.OptimisationRun.issued_at).all())
+        runs = [r for r in runs if isinstance(r.slots, dict) and r.slots.get("predicted")]
+        if not runs:
+            return {"status": "no_data", "reason": "No model-based plans recorded yet. Shadow mode records one every poll.", "runs": 0, "points": 0}
+        earliest = min(as_utc(r.horizon_start) for r in runs)
+        meas = [(as_utc(r.ts), r.value) for r in repo.measurements_for(s, self.property_id, Signal.INDOOR_TEMPERATURE.value, earliest, now) if r.value is not None]
+        import bisect
+        times = [t for t, _ in meas]
+
+        def actual_at(t: datetime) -> float | None:
+            if not meas:
+                return None
+            i = bisect.bisect_left(times, t)
+            cands = [meas[j] for j in (i - 1, i) if 0 <= j < len(meas)]
+            best = min(cands, key=lambda c: abs((c[0] - t).total_seconds()), default=None)
+            return best[1] if best and abs((best[0] - t).total_seconds()) <= 1200 else None
+
+        eb, eo, by_run = [], [], []
+        for r in runs:
+            rb, ro = [], []
+            for p in r.slots["predicted"]:
+                t = datetime.fromisoformat(p["start"]) + timedelta(minutes=30)
+                if t > now:
+                    continue
+                a = actual_at(t)
+                if a is None:
+                    continue
+                rb.append(p["t_in_baseline"] - a)
+                ro.append(p["t_in"] - a)
+            if rb:
+                eb += rb
+                eo += ro
+                by_run.append({"issued_at": as_utc(r.issued_at).isoformat(), "points": len(rb),
+                               "rmse_baseline_c": round(math.sqrt(sum(x * x for x in rb) / len(rb)), 2),
+                               "bias_baseline_c": round(sum(rb) / len(rb), 2)})
+        if not eb:
+            return {"status": "waiting", "reason": "Plans recorded but their horizons have not elapsed yet.", "runs": len(runs), "points": 0}
+        rmse_b = math.sqrt(sum(x * x for x in eb) / len(eb))
+        return {"status": "ok", "runs": len(by_run), "points": len(eb),
+                "rmse_baseline_c": round(rmse_b, 2), "mae_baseline_c": round(sum(abs(x) for x in eb) / len(eb), 2),
+                "bias_baseline_c": round(sum(eb) / len(eb), 2),
+                "rmse_optimised_c": round(math.sqrt(sum(x * x for x in eo) / len(eo)), 2),
+                "target_rmse_c": 0.5, "meets_target": rmse_b <= 0.5, "by_run": by_run[-14:],
+                "note": "Baseline is the model running a plain thermostat, which is what the house actually does until control is enabled."}
 
     def _record_shadow_plan(self, s) -> int | None:
         plan = self.shadow_plan(s)
-        if plan["status"] != "indicative":
+        if plan["status"] not in ("indicative", "model_based"):
             return None
+        cost = plan.get("cost") or {}
         run = m.OptimisationRun(property_id=self.property_id, issued_at=self.clock.now(),
                                 horizon_start=datetime.fromisoformat(plan["horizon_start"]),
                                 horizon_end=datetime.fromisoformat(plan["horizon_end"]),
                                 mode=self.settings.operating_mode.value, tariff_code=self.last_poll.get("tariff_code"),
-                                slots=plan["actions"], status="shadow")
+                                predicted_cost_pence=cost.get("optimised_p"), baseline_cost_pence=cost.get("baseline_p"),
+                                slots={"kind": plan["status"], "actions": plan["actions"], "predicted": plan.get("predicted", [])}, status="shadow")
         s.add(run)
         s.flush()
         return run.id
@@ -297,8 +558,10 @@ class Platform:
                 ri = book.rate_at(now)
                 rate_now = ri.rate_p_per_kwh if ri else None
             full = self.shadow_plan(s, now)
-            plan = {"status": full["status"], "reason": full["reason"], "actions": full["actions"]}
+            plan = {"status": full["status"], "reason": full["reason"], "actions": full["actions"], "cost": full.get("cost"), "model": full.get("model")}
             heat_loss = self.thermal_estimate(s, now=now)
+            heat_pump = self.heat_pump_estimate(s, now=now)
+            heat_pump.pop("model", None)
             return {
                 "generated_at": now.isoformat(),
                 "data_mode": self.settings.data_mode.value,
@@ -317,6 +580,7 @@ class Platform:
                 "plan": plan,
                 "next_action": full["next_action"],
                 "heat_loss": heat_loss,
+                "heat_pump": heat_pump,
             }
 
     def _energy_costs(self, s, start_day: date, end_day: date) -> dict[str, Any]:
@@ -377,9 +641,16 @@ class Platform:
             charges = s.query(m.TariffStandingCharge).filter_by(tariff_code=tariff_code).all()
             from ..domain import StandingCharge
             sc_pence = standing_charge_for_period([StandingCharge(start=as_utc(c.start), end=as_utc(c.end), pence_per_day=c.pence_per_day, tariff_code=c.tariff_code) for c in charges], start, min(end, self.clock.now()))
+        heat_total_th = heat_kwh_th + dhw_kwh_th
+        eff = max(0.5, min(1.0, self.settings.boiler_efficiency))
+        gas_kwh = heat_total_th / eff
+        gas_cost = round(gas_kwh * self.settings.gas_price_p_per_kwh, 2)
         return {
             "period": {"start": start.isoformat(), "end": end.isoformat()},
             "tariff_code": tariff_code,
+            "gas_equivalent": {"kwh_gas": round(gas_kwh, 3), "cost_pence": gas_cost, "price_p_per_kwh": self.settings.gas_price_p_per_kwh,
+                               "boiler_efficiency": eff, "saving_pence": round(gas_cost - (hc + dc), 2),
+                               "note": "Modelled what-if: the same delivered heat from a gas boiler at the configured efficiency and unit price. Standing charges excluded on both sides."},
             "space_heating": {"kwh_electric": hk, "kwh_heat": heat_kwh_th, "cop": round(heat_kwh_th / hk, 2) if hk else None,
                               "cost_pence": hc, "pence_per_kwh_heat": round(hc / heat_kwh_th, 2) if heat_kwh_th else None,
                               "quality": q_of(heat_e), "prices_complete": hok},
@@ -406,7 +677,7 @@ class Platform:
                 c = self._energy_costs(s, d, d + timedelta(days=1))
                 out.append({"date": d.isoformat(), "space_heating": c["space_heating"], "hot_water": c["hot_water"],
                             "heat_pump_total": c["heat_pump_total"], "whole_home_import": c["whole_home_import"],
-                            "standing_charge_pence": c["standing_charge_pence"]})
+                            "standing_charge_pence": c["standing_charge_pence"], "gas_equivalent": c["gas_equivalent"]})
                 d += timedelta(days=1)
         return out
 
@@ -453,6 +724,7 @@ class Platform:
                       "dispatches": s.query(m.SmartChargingDispatch).filter_by(property_id=self.property_id).count(),
                       "shadow_plans": s.query(m.OptimisationRun).filter_by(property_id=self.property_id).count(),
                       "building_models": s.query(m.BuildingModelVersion).filter_by(property_id=self.property_id).count(),
+                      "heat_pump_models": s.query(m.HeatPumpModelVersion).filter_by(property_id=self.property_id).count(),
                       "control_actions": s.query(m.ControlExecutionLog).filter_by(property_id=self.property_id).count()}
         return {"generated_at": now.isoformat(), "data_mode": self.settings.data_mode.value, "operating_mode": self.settings.operating_mode.value,
                 "control_enabled": self.settings.control_enabled,
@@ -460,7 +732,8 @@ class Platform:
                 "integrations": self.capability_report.integrations if self.capability_report else [],
                 "warnings": self.capability_report.warnings if self.capability_report else [],
                 "signals": signals, "missing_for_thermal_model": [x.value for x in (self.capability_report.missing_for_thermal_model() if self.capability_report else [])],
-                "recent_events": events, "record_counts": counts, "last_poll": self.last_poll}
+                "recent_events": events, "record_counts": counts, "last_poll": self.last_poll,
+                "forecast_accuracy": self.forecast_accuracy(s, now=now), "control": self.control_status()}
 
 
 def _ri(r: m.TariffRateInterval) -> RateInterval:
@@ -483,10 +756,24 @@ def build_platform(settings: Settings | None = None) -> Platform:
         cfg = SimConfig(seed=settings.sim_seed, days=settings.sim_days + 3)
         home = SimulatedHome(cfg)
         clock = SimClock(cfg.start + timedelta(days=settings.sim_days) - timedelta(hours=6))
-        return Platform(settings, SimulatedTelemetryProvider(home, clock), SimulatedTariffProvider(home, clock),
-                        SimulatedWeatherProvider(home, clock), SimulatedSolarProvider(home, clock), clock, simulated_home=home)
+        p = Platform(settings, SimulatedTelemetryProvider(home, clock), SimulatedTariffProvider(home, clock),
+                     SimulatedWeatherProvider(home, clock), SimulatedSolarProvider(home, clock), clock, simulated_home=home)
+        if settings.control_enabled and settings.control_climate_entity:
+            from ..control import Controller
+            from ..integrations.homeassistant.control import RecordingControlAdapter
+
+            p.controller = Controller(settings, RecordingControlAdapter(initial=cfg.setpoint_c), property_id=0)
+        return p
     from ..integrations.homeassistant.client import HAClient
     from ..integrations.homeassistant.providers import HAOctopusTariffProvider, HASolcastProvider, HATelemetryProvider, HAWeatherProvider
 
     client = HAClient()
-    return Platform(settings, HATelemetryProvider(client), HAOctopusTariffProvider(client), HAWeatherProvider(client), HASolcastProvider(client), _RealClock())
+    p = Platform(settings, HATelemetryProvider(client), HAOctopusTariffProvider(client), HAWeatherProvider(client), HASolcastProvider(client), _RealClock())
+    if settings.control_enabled and settings.control_climate_entity:
+        from ..control import Controller
+        from ..integrations.homeassistant.control import HAControlAdapter
+
+        p.controller = Controller(settings, HAControlAdapter(client), property_id=0)
+        log.warning("Active control is ENABLED on %s (mode %s, max offset %.1f degC)", settings.control_climate_entity,
+                    settings.operating_mode.value, settings.control_max_offset_c)
+    return p

@@ -73,6 +73,11 @@ export default function OverviewPage() {
             <div className="big">{pounds(t.standing_charge_pence)}</div>
             <div className="sub">whole property, shown separately</div>
           </div>
+          <div className={`card ${t.gas_equivalent.saving_pence >= 0 ? "info" : "warn"}`}>
+            <h3>Same heat on gas</h3>
+            <div className="big">{pounds(t.gas_equivalent.cost_pence)}</div>
+            <div className="sub">{t.gas_equivalent.saving_pence >= 0 ? `heat pump ${pounds(t.gas_equivalent.saving_pence)} cheaper` : `heat pump ${pounds(-t.gas_equivalent.saving_pence)} dearer`} · modelled at {t.gas_equivalent.price_p_per_kwh}p, {Math.round(t.gas_equivalent.boiler_efficiency * 100)}% boiler</div>
+          </div>
         </div>
         <p className="muted" style={{ fontSize: "0.82rem" }}>
           Heat pump energy figures come from the Vaillant controller and are manufacturer estimates, not independent meter readings. Hourly data arrives one to two hours late, so today's totals are incomplete until tomorrow.
@@ -113,6 +118,11 @@ export default function OverviewPage() {
               <div className="sub">time constant · stores {num(o.heat_loss.capacity_kwh_per_k, 1, " kWh")} per °C{o.heat_loss.internal_gain_kw != null ? ` · ${num(o.heat_loss.internal_gain_kw, 2, " kW")} internal gains` : ""}</div>
             </div>
           )}
+          <div className="card">
+            <h3>Heat pump efficiency{o.heat_pump.status === "ok" && <span className="tag">{Math.round(o.heat_pump.confidence * 100)}% confidence</span>}</h3>
+            <div className="big">{num(o.heat_pump.cop_at_7, 1)}</div>
+            <div className="sub">COP at 7 °C · {num(o.heat_pump.cop_at_minus_2, 1)} at −2 °C · {o.heat_pump.status === "prior" ? "typical values, no data yet" : `${o.heat_pump.samples} hours of data`}{o.heat_pump.observed_mean_cop ? ` · observed ${num(o.heat_pump.observed_mean_cop, 1)}` : ""}</div>
+          </div>
           {o.heat_loss.status === "ok" && (
             <div className="card">
               <h3>Based on</h3>

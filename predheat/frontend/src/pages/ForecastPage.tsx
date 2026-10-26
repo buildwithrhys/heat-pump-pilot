@@ -34,6 +34,25 @@ export default function ForecastPage() {
         <h2>What PredHeat would do in the next 24 hours</h2>
         <PlanList plan={t.optimisation} />
       </div>
+      {t.optimisation.predicted && t.optimisation.predicted.length > 0 && (
+        <div className="section chart">
+          <h4>Predicted indoor temperature, next 24 hours (°C)</h4>
+          <div className="legend">
+            <span style={{ "--c": css("--primary") } as React.CSSProperties}>PredHeat plan</span>
+            <span style={{ "--c": css("--axis") } as React.CSSProperties}>Plain thermostat</span>
+          </div>
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={t.optimisation.predicted.map((p) => ({ x: p.start, label: dayhh(p.start), plan: p.t_in, base: p.t_in_baseline, heat: p.heat_kw }))} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+              <CartesianGrid vertical={false} stroke={grid} />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: ink2 }} tickFormatter={(v, i) => tickEvery(6)(i) ?? v} interval={0} axisLine={{ stroke: grid }} tickLine={false} />
+              <YAxis tick={{ fontSize: 12, fill: ink2 }} axisLine={false} tickLine={false} width={34} domain={["auto", "auto"]} />
+              <Tooltip formatter={(v, n) => [`${Number(v ?? 0).toFixed(1)} ${String(n) === "heat" ? "kW" : "°C"}`, String(n) === "plan" ? "PredHeat plan" : String(n) === "base" ? "Plain thermostat" : "Heat output"]} labelFormatter={(_l, p) => (p?.[0] ? dayhh((p[0].payload as { x: string }).x) : "")} contentStyle={{ borderRadius: 8, fontSize: 13 }} />
+              <Line type="monotone" dataKey="base" stroke={css("--axis")} strokeWidth={2} strokeDasharray="4 3" dot={false} />
+              <Line type="monotone" dataKey="plan" stroke={css("--primary")} strokeWidth={2} dot={false} activeDot={{ r: 5 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
       <div className="note">
         The charts below are the inputs behind the plan: prices by certainty, weather and solar. Planned Intelligent Octopus dispatches are shown but never assumed to qualify until they start.
       </div>

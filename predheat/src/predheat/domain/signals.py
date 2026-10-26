@@ -109,6 +109,12 @@ class SignalSpec:
     accept_units: tuple[str, ...] = ()
     # Multiply native value by this to get canonical units (e.g. Wh -> kWh = 0.001)
     unit_scale: dict[str, float] = field(default_factory=dict)
+    # Entity domains that may carry this signal. Power, temperature and energy are
+    # sensors; booleans are binary sensors. A switch is never a reading.
+    domains: tuple[str, ...] = ("sensor",)
+    # Every substring in ``require`` must appear in the entity id; any in ``exclude`` rejects it.
+    require: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
 
 
 _W_TO_KW = {"W": 0.001, "kW": 1.0}
@@ -161,9 +167,9 @@ SIGNAL_CATALOGUE: dict[Signal, SignalSpec] = {
                    "Controller operating state (HEATING, DHW, STANDBY, ...)",
                    hints=("energy_manager_state", "circuit_0_state", "operating_state")),
         SignalSpec(Signal.HP_COMPRESSOR_ON, "bool", SignalKind.STATE, "Compressor running",
-                   default_quality=Quality.UNAVAILABLE, hints=("compressor",)),
+                   default_quality=Quality.UNAVAILABLE, hints=("compressor",), domains=("binary_sensor",)),
         SignalSpec(Signal.HP_DEFROST_ACTIVE, "bool", SignalKind.STATE, "Defrost in progress",
-                   default_quality=Quality.UNAVAILABLE, hints=("defrost",)),
+                   default_quality=Quality.UNAVAILABLE, hints=("defrost",), domains=("binary_sensor",)),
         SignalSpec(Signal.HP_ON_OFF_CYCLES, "count", SignalKind.CUMULATIVE, "Compressor on/off cycles",
                    default_quality=Quality.MANUFACTURER_ESTIMATED, hints=("arotherm_pro_on_off_cycles", "on_off_cycles")),
         SignalSpec(Signal.HP_OPERATION_HOURS, "h", SignalKind.CUMULATIVE, "Compressor operating hours",
@@ -208,7 +214,7 @@ SIGNAL_CATALOGUE: dict[Signal, SignalSpec] = {
         SignalSpec(Signal.DHW_OPERATING_MODE, "state", SignalKind.STATE, "Hot water operating mode",
                    hints=("domestic_hot_water_0_operation_mode",)),
         SignalSpec(Signal.DHW_BOOST_ACTIVE, "bool", SignalKind.STATE, "Hot water boost active",
-                   hints=("domestic_hot_water_0_boost",)),
+                   hints=("domestic_hot_water_0_boost",), domains=("binary_sensor", "switch")),
         SignalSpec(Signal.GRID_IMPORT_KWH, "kWh", SignalKind.CUMULATIVE, "Grid import energy",
                    default_quality=Quality.METERED,
                    hints=("current_total_consumption", "power_meter_consumption", "grid_import"),
@@ -241,19 +247,24 @@ SIGNAL_CATALOGUE: dict[Signal, SignalSpec] = {
         SignalSpec(Signal.BATTERY_DISCHARGE_KWH, "kWh", SignalKind.CUMULATIVE, "Battery discharge energy",
                    hints=("batteries_total_discharge",), device_class="energy", unit_scale=_WH_TO_KWH),
         SignalSpec(Signal.EV_CHARGER_POWER, "kW", SignalKind.INSTANT, "EV charger power",
-                   hints=("hypervolt", "ohme_home_go_power", "ev_charger_power"), device_class="power",
-                   unit_scale=_W_TO_KW),
+                   hints=("predbat_hypervolt", "hypervolt", "ohme_home_go_power", "ev_charger_power"), device_class="power",
+                   unit_scale=_W_TO_KW, require=("power",), exclude=("session", "energy", "max_", "limit")),
+        # Octopus entities are anchored to the integration prefix; the import meter's
+        # entities never contain "export", the export meter's always do.
         SignalSpec(Signal.IMPORT_RATE_NOW, "p/kWh", SignalKind.INSTANT, "Current import unit rate inc VAT",
-                   default_quality=Quality.METERED,
-                   hints=("octopus_energy_electricity", "current_rate"), unit_scale=_RATE),
+                   default_quality=Quality.METERED, hints=("_current_rate",), unit_scale=_RATE,
+                   require=("octopus_energy_electricity",), exclude=("export", "previous", "next", "calculated")),
         SignalSpec(Signal.EXPORT_RATE_NOW, "p/kWh", SignalKind.INSTANT, "Current export unit rate",
-                   hints=("export_current_rate",), unit_scale=_RATE),
+                   hints=("export_current_rate",), unit_scale=_RATE,
+                   require=("octopus_energy_electricity",), exclude=("previous", "next")),
         SignalSpec(Signal.STANDING_CHARGE_NOW, "p/day", SignalKind.INSTANT, "Current standing charge inc VAT",
-                   hints=("current_standing_charge",), unit_scale={"GBP": 100.0, "p": 1.0}),
+                   hints=("current_standing_charge",), unit_scale={"GBP": 100.0, "GBP/day": 100.0, "p": 1.0, "p/day": 1.0},
+                   require=("octopus_energy_electricity",), exclude=("export",)),
         SignalSpec(Signal.OFF_PEAK_ACTIVE, "bool", SignalKind.STATE, "Off-peak period active",
-                   hints=("_off_peak",)),
+                   hints=("_off_peak",), domains=("binary_sensor",),
+                   require=("octopus_energy_electricity",), exclude=("export",)),
         SignalSpec(Signal.INTELLIGENT_DISPATCHING, "bool", SignalKind.STATE,
-                   "Intelligent Octopus dispatch in progress", hints=("intelligent_dispatching",)),
+                   "Intelligent Octopus dispatch in progress", hints=("intelligent_dispatching",), domains=("binary_sensor",)),
         SignalSpec(Signal.WEATHER_TEMPERATURE, "degC", SignalKind.INSTANT, "Weather service air temperature",
                    hints=("openweathermap_temperature",), device_class="temperature"),
         SignalSpec(Signal.WEATHER_WIND_SPEED, "m/s", SignalKind.INSTANT, "Wind speed",

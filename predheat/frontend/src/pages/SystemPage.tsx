@@ -12,9 +12,30 @@ export default function SystemPage() {
     <>
       <div className="grid">
         <div className="card"><h3>Data source</h3><div className="big" style={{ fontSize: "1.2rem" }}>{s.data_mode}</div><div className="sub">operating mode {s.operating_mode}</div></div>
-        <div className="card"><h3>Control</h3><div className="big" style={{ fontSize: "1.2rem" }}>{s.control_enabled ? "ENABLED" : "Off"}</div><div className="sub">{s.record_counts.control_actions} actions logged</div></div>
+        <div className={`card ${s.control.holding ? "info" : ""}`}><h3>Control</h3><div className="big" style={{ fontSize: "1.2rem" }}>{!s.control.configured ? "Off" : s.control.holding ? `Holding ${s.control.commanded_c} °C` : "Armed"}</div><div className="sub">{s.control.configured ? `${s.control.entity} · ${s.control.last?.reason ?? "waiting for first cycle"}` : s.control.reason} · {s.record_counts.control_actions} log entries</div></div>
         <div className="card"><h3>Signals</h3><div className="big">{avail.length}<span className="muted" style={{ fontSize: "1rem" }}> / {s.signals.length}</span></div><div className="sub">{avail.filter((x) => x.stale).length} stale</div></div>
         <div className="card"><h3>Stored</h3><div className="big">{s.record_counts.measurements.toLocaleString()}</div><div className="sub">measurements · {s.record_counts.rate_intervals} rate slots · {s.record_counts.dispatches} dispatches</div></div>
+      </div>
+
+      <div className="section">
+        <h2>Forecast accuracy</h2>
+        {s.forecast_accuracy.status !== "ok" ? (
+          <p className="muted">{s.forecast_accuracy.reason}</p>
+        ) : (
+          <div className="grid">
+            <div className={`card ${s.forecast_accuracy.meets_target ? "info" : "warn"}`}>
+              <h3>Indoor temperature error</h3>
+              <div className="big">{s.forecast_accuracy.rmse_baseline_c?.toFixed(2)} °C</div>
+              <div className="sub">RMSE over {s.forecast_accuracy.points} half-hours in {s.forecast_accuracy.runs} plans · target {s.forecast_accuracy.target_rmse_c} °C</div>
+            </div>
+            <div className="card">
+              <h3>Bias</h3>
+              <div className="big">{(s.forecast_accuracy.bias_baseline_c ?? 0) > 0 ? "+" : ""}{s.forecast_accuracy.bias_baseline_c?.toFixed(2)} °C</div>
+              <div className="sub">positive means the model runs warm · mean absolute error {s.forecast_accuracy.mae_baseline_c?.toFixed(2)} °C</div>
+            </div>
+          </div>
+        )}
+        {s.forecast_accuracy.note && <p className="muted" style={{ fontSize: 12 }}>{s.forecast_accuracy.note}</p>}
       </div>
 
       {s.missing_for_thermal_model.length > 0 && (

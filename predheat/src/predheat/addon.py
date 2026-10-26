@@ -34,6 +34,11 @@ OPTION_ENV = {
     "octopus_account": "PREDHEAT_OCTOPUS_ACCOUNT",
     "openweather_api_key": "PREDHEAT_OPENWEATHER_API_KEY",
     "solcast_api_key": "PREDHEAT_SOLCAST_API_KEY",
+    "control_enabled": "PREDHEAT_CONTROL_ENABLED",
+    "control_climate_entity": "PREDHEAT_CONTROL_CLIMATE_ENTITY",
+    "control_max_offset_c": "PREDHEAT_CONTROL_MAX_OFFSET_C",
+    "gas_price_p_per_kwh": "PREDHEAT_GAS_PRICE_P_PER_KWH",
+    "boiler_efficiency": "PREDHEAT_BOILER_EFFICIENCY",
     "sim_days": "PREDHEAT_SIM_DAYS",
     "sim_seed": "PREDHEAT_SIM_SEED",
 }
@@ -48,8 +53,9 @@ def env_from_options(
     """Build the environment for the server.
 
     Precedence: add-on options > environment already present > built-in defaults.
-    ``PREDHEAT_CONTROL_ENABLED`` is always forced to ``false``: the add-on is a
-    monitor and nothing in it may act on heating equipment (see SAFETY.md).
+    Control stays off unless the add-on option ``control_enabled`` is true AND the
+    operating mode is balanced or max_savings AND a climate entity is named; the
+    controller re-checks its guards on every cycle (see SAFETY.md).
     """
     env: dict[str, str] = {
         "PREDHEAT_DATA_DIR": str(data_dir),
@@ -72,7 +78,10 @@ def env_from_options(
             continue
         env[var] = str(value).lower() if isinstance(value, bool) else str(value)
     env["PREDHEAT_LOG_LEVEL"] = env["PREDHEAT_LOG_LEVEL"].upper()
-    env["PREDHEAT_CONTROL_ENABLED"] = "false"
+    mode = env.get("PREDHEAT_OPERATING_MODE", "monitor")
+    wants_control = str(options.get("control_enabled", "")).lower() == "true"
+    if not (wants_control and mode in ("balanced", "max_savings") and options.get("control_climate_entity")):
+        env["PREDHEAT_CONTROL_ENABLED"] = "false"
     return env
 
 

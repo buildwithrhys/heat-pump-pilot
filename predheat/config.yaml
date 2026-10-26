@@ -1,5 +1,5 @@
 name: PredHeat
-version: "0.1.1"
+version: "0.2.0"
 slug: predheat
 description: Self-learning heat pump and home energy optimiser. Read-only monitoring in this release.
 url: https://github.com/buildwithrhys/predheat
@@ -25,11 +25,18 @@ options:
   operating_mode: monitor
   poll_seconds: 300
   log_level: info
+  gas_price_p_per_kwh: 6.24
+  boiler_efficiency: 0.85
 schema:
   data_mode: list(simulated|home_assistant)
-  operating_mode: list(monitor|shadow)
+  operating_mode: list(monitor|shadow|balanced|max_savings)
+  control_enabled: bool?
+  control_climate_entity: str?
+  control_max_offset_c: float(0.5,2.0)?
   poll_seconds: int(60,3600)
   log_level: list(debug|info|warning|error)
+  gas_price_p_per_kwh: float(0,50)
+  boiler_efficiency: float(0.5,1.0)
   latitude: float?
   longitude: float?
   octopus_api_key: password?

@@ -7,6 +7,7 @@ is the basis of the entity-mapping UI (the user confirms or overrides).
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Iterable
 
@@ -19,6 +20,7 @@ from ...domain import (
     Signal,
     SignalSpec,
 )
+from ...domain.signals import SignalKind
 from .client import HAState
 
 # Platforms we know how to interpret, mapped to provenance labels
@@ -31,16 +33,29 @@ KNOWN_PLATFORMS: dict[str, Provenance] = {
 }
 
 # Entities that look like a match but must never be used for a signal
-_EXCLUDE_SUBSTRINGS = ("forecast_", "_2", "model_y_", "tesla_", "inverter_internal", "bms_", "pack_", "device_temperature")
+_EXCLUDE_SUBSTRINGS = ("forecast_", "model_y_", "tesla_", "inverter_internal", "bms_", "pack_", "device_temperature")
+# Home Assistant appends _2, _3 ... to duplicate entity ids; those are stale copies.
+_DUPLICATE_SUFFIX = re.compile(r"_\d$")
 
 
 def _score(state: HAState, spec: SignalSpec) -> tuple[float, str]:
     """Return (confidence 0..1, note) for mapping *state* to *spec*."""
     eid = state.entity_id.lower()
-    if any(x in eid for x in _EXCLUDE_SUBSTRINGS):
+    if any(x in eid for x in _EXCLUDE_SUBSTRINGS) or _DUPLICATE_SUFFIX.search(eid):
         return 0.0, "excluded"
     if state.disabled:
         return 0.0, "disabled"
+    if state.domain not in spec.domains:
+        return 0.0, f"domain {state.domain} cannot carry this signal"
+    if spec.require and not all(r in eid for r in spec.require):
+        return 0.0, "missing required anchor"
+    if any(x in eid for x in spec.exclude):
+        return 0.0, "excluded by signal rule"
+    is_energy_counter = state.device_class == "energy" or (state.unit or "") in ("Wh", "kWh", "MWh")
+    if spec.kind != SignalKind.CUMULATIVE and is_energy_counter:
+        return 0.0, "energy counter cannot carry an instantaneous or boolean signal"
+    if spec.kind == SignalKind.CUMULATIVE and state.domain == "sensor" and not is_energy_counter and spec.unit == "kWh":
+        return 0.0, "not an energy counter"
     score = 0.0
     note = ""
     for rank, hint in enumerate(spec.hints):
@@ -59,6 +74,9 @@ def _score(state: HAState, spec: SignalSpec) -> tuple[float, str]:
         note += f"; unit {unit} not convertible"
     if spec.accept_units and unit and unit not in spec.accept_units:
         score -= 0.3
+    if spec.unit_scale and not unit:
+        score -= 0.5
+        note += "; no unit"
     if not state.is_live:
         score -= 0.5
         note += f"; state is {state.state}"
@@ -72,8 +90,6 @@ def propose_mappings(states: Iterable[HAState]) -> dict[Signal, list[tuple[HASta
     for signal, spec in SIGNAL_CATALOGUE.items():
         cands = []
         for s in states:
-            if s.domain not in ("sensor", "binary_sensor", "number", "switch", "climate", "water_heater"):
-                continue
             sc, note = _score(s, spec)
             if sc > 0:
                 cands.append((s, sc, note))

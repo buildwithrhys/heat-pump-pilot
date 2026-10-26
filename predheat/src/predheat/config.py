@@ -36,9 +36,12 @@ class Settings(BaseSettings):
     data_mode: DataMode = DataMode.SIMULATED
     operating_mode: OperatingMode = OperatingMode.MONITOR
     # Hard guard: active control is impossible unless this is explicitly set to true
-    # AND the operating mode is balanced/max_savings AND the control adapter reports
-    # that control ownership has been verified. See SAFETY.md.
+    # AND the operating mode is balanced/max_savings AND a climate entity is named
+    # AND the controller's runtime checks pass on every cycle. See SAFETY.md.
     control_enabled: bool = False
+    control_climate_entity: str | None = None  # e.g. climate.house_zone_1_circuit_0_climate
+    control_max_offset_c: float = 1.0  # how far the setpoint may be moved either way
+    control_override_hours: float = 4.0  # back off this long after a manual change
 
     database_url: str = "sqlite:///./data/predheat.sqlite"
     timezone: str = "Europe/London"
@@ -58,6 +61,10 @@ class Settings(BaseSettings):
     octopus_account: str | None = None
     openweather_api_key: SecretStr | None = None
     solcast_api_key: SecretStr | None = None
+
+    # Gas comparison (modelled counterfactual, labelled as such)
+    gas_price_p_per_kwh: float = 6.24
+    boiler_efficiency: float = 0.85
 
     # Simulation
     sim_seed: int = 42
