@@ -44,7 +44,16 @@ The plan tells PredHeat where one more kWh for the heat pump would come from in 
 
 PredHeat plans the heating with these prices, so it no longer avoids heating at 5pm when the battery is covering the house cheaply. The Forecast tab shows the cost line over the price chart, and System health shows whether the plan is in use. The plan is used only while it is under 30 minutes old. Turn it off with "Use Predbat's battery plan" on the Settings tab.
 
-Not yet: telling Predbat what the heat pump will use. Predbat's load forecast is based on past days, so when PredHeat moves heating, Predbat's battery plan does not know until it has seen it happen.
+**Sharing PredHeat's plan with Predbat.** Predbat forecasts your usage from past days, so when PredHeat moves heating it would not know in advance. PredHeat publishes `sensor.predheat_heat_pump_plan` for Predbat to read. Add it to Predbat's `apps.yaml`, alongside any load forecast you already have, and restart Predbat:
+
+```yaml
+  load_forecast:
+    - sensor.predheat_heat_pump_plan$extra
+```
+
+Predbat adds an outside forecast on top of its own, and its own already includes the heat pump from past days. So the `extra` attribute holds only the space heating PredHeat plans above what the same half hour used on average over the last 7 days. Heating moved away from a time cannot be taken off Predbat's forecast (Predbat ignores negative values), so at those times Predbat may keep a little more in the battery than needed, which errs on the safe side. The `planned` attribute holds the full space heating plan, for setups whose history already excludes the heat pump.
+
+The sensor carries extra load only while PredHeat is controlling the heating (Balanced or Max savings with Allow control on), and not on trial days run by your ordinary thermostat; otherwise it is zero, because the heat pump will use what it usually does. System health shows what is being shared. Turn it off with "Share PredHeat's plan with Predbat" on the Settings tab. Hot water is not included yet.
 
 ## The heating curve check
 

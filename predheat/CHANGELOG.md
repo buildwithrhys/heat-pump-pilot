@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0
+
+- **Share PredHeat's plan with Predbat.** PredHeat publishes `sensor.predheat_heat_pump_plan` in Home Assistant in the format Predbat reads as an extra load forecast. Add `sensor.predheat_heat_pump_plan$extra` to `load_forecast` in Predbat's apps.yaml and Predbat will plan the battery around the heating PredHeat intends. Because Predbat's own forecast already includes the heat pump from past days, only heating above what recent days used is shared, so nothing is counted twice. It carries nothing while PredHeat is not controlling the heating, or on trial days run by your ordinary thermostat. System health shows what is being shared and the exact lines to add; "Share PredHeat's plan with Predbat" on the Settings tab turns it off. Checked against Predbat's own parsing code.
+
 ## 0.5.0
 
 - **Predbat.** If Predbat is installed, PredHeat now reads its battery and solar plan (read only; nothing in Predbat is changed) and works out what extra heating would really cost in each half hour. Solar you would otherwise export costs only the export payment you give up; the battery costs what Predbat values stored energy at; the rest is the grid price. The planner uses these prices, so it no longer treats 5pm as expensive when your battery is covering the house. The Forecast tab draws the cost line over the price chart, System health shows whether the plan is in use and why not, and "Use Predbat's battery plan" on the Settings tab turns it off. Without Predbat nothing changes.

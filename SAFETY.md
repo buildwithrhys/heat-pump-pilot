@@ -24,7 +24,7 @@ If telemetry is stale, a control call fails, the optimiser stops responding, or 
 
 ## Conflict prevention
 
-Only one automation may own heating setpoints. While EnergyPLUS retains control, PredHeat remains in monitor or shadow mode. Predbat controls the battery, not the heat pump, and the EV is managed by Intelligent Octopus; PredHeat reads those systems and never writes to them. From 0.5.0 PredHeat reads Predbat's published plan entities (grid, battery, state of charge, rates) to price heating; it calls no Predbat service and changes no Predbat setting.
+Only one automation may own heating setpoints. While EnergyPLUS retains control, PredHeat remains in monitor or shadow mode. Predbat controls the battery, not the heat pump, and the EV is managed by Intelligent Octopus; PredHeat reads those systems and never writes to them. From 0.5.0 PredHeat reads Predbat's published plan entities (grid, battery, state of charge, rates) to price heating; it calls no Predbat service and changes no Predbat setting. From 0.6.0 PredHeat also publishes one sensor of its own, `sensor.predheat_heat_pump_plan`, through `HAControlAdapter.publish_state`, which refuses any entity not named `sensor.predheat_*`. The sensor is information only: Predbat reads it only if the person adds it to Predbat's `load_forecast`, and it carries extra load only while PredHeat is actually controlling the heating.
 
 ## Credentials
 

@@ -230,6 +230,11 @@ class Platform:
                 except Exception as exc:  # noqa: BLE001
                     result["shadow_error"] = str(exc)
                     repo.log_quality_event(s, self.property_id, "error", "shadow_planner", str(exc))
+            try:
+                result["predbat_feed"] = await self._publish_predbat_feed(s)
+            except Exception as exc:  # noqa: BLE001
+                result["predbat_feed_error"] = str(exc)
+                repo.log_quality_event(s, self.property_id, "warning", "predbat", f"could not publish the plan for Predbat: {exc}")
             if self.controller is not None:
                 try:
                     result["control"] = (await self._control_step(s)).status
@@ -293,6 +298,86 @@ class Platform:
         from ..integrations.predbat import apply_to_slots
 
         return apply_to_slots(self.predbat, slots, extra_kw)
+
+    FEED_ENTITY = "sensor.predheat_heat_pump_plan"
+    FEED_ATTRIBUTE = "extra"
+
+    def _usual_heating_kwh(self, s, now: datetime, days: int = 7) -> dict[tuple[int, int], float]:
+        """Average space heating electricity per local half hour of the day over recent days: roughly
+        what Predbat's own load forecast, built from past days, already expects from the heat pump."""
+        rows = counter_to_intervals(self._counter_measurements(s, Signal.HP_ELEC_HEATING_KWH, now - timedelta(days=days, hours=3), now), "e")
+        acc: dict[tuple[int, int], float] = {}
+        for i in rows:
+            st = as_utc(i.start)
+            if st < now - timedelta(days=days):
+                continue
+            loc = st.astimezone(LONDON)
+            k = (loc.hour, 0 if loc.minute < 30 else 30)
+            acc[k] = acc.get(k, 0.0) + i.kwh
+        seen_days = max(1, len({as_utc(i.start).astimezone(LONDON).date() for i in rows if as_utc(i.start) >= now - timedelta(days=days)}))
+        return {k: v / seen_days for k, v in acc.items()}
+
+    def predbat_feed(self, s, now: datetime | None = None) -> dict[str, Any]:
+        """What PredHeat shares with Predbat: heating it plans above what recent days used, as an
+        incrementing kWh series (Predbat's load_forecast format). Empty while PredHeat is not acting."""
+        now = now or self.clock.now()
+        plan = self.shadow_plan(s, now)
+        connect = f"{self.FEED_ENTITY}${self.FEED_ATTRIBUTE}"
+        base: dict[str, Any] = {"entity_id": self.FEED_ENTITY, "attribute": self.FEED_ATTRIBUTE, "apps_yaml": f"load_forecast:\n  - {connect}",
+                                "enabled": bool(getattr(self.settings, "publish_for_predbat", True))}
+        predicted = plan.get("predicted") or []
+        if plan.get("status") != "model_based" or not predicted:
+            return {**base, "status": "waiting", "extra_kwh": 0.0, "planned_kwh": 0.0, "slots": [],
+                    "reason": "Nothing to share yet: PredHeat shares its plan once the learned house model is ready (see Your house)."}
+        acting, why = (self.controller.configured() if self.controller is not None else (False, "no controller"))
+        usual = self._usual_heating_kwh(s, now)
+        trial = bool(getattr(self.settings, "trial_mode", False))
+        from ..control import Controller
+
+        slots = []
+        for p in predicted:
+            st = datetime.fromisoformat(p["start"])
+            loc = st.astimezone(LONDON)
+            u = usual.get((loc.hour, 0 if loc.minute < 30 else 30), 0.0)
+            ordinary_day = trial and Controller.trial_day_is_baseline(st)
+            extra = max(0.0, p["elec_kwh"] - u) if acting and not ordinary_day else 0.0
+            slots.append({"start": p["start"], "planned_kwh": round(p["elec_kwh"], 3), "usual_kwh": round(u, 3), "extra_kwh": round(extra, 3),
+                          "ordinary_day": ordinary_day})
+        if not acting:
+            reason = ("PredHeat is not controlling the heating (Operating mode is not Balanced or Max savings, or Allow control is off), "
+                      "so the heat pump will use what it usually does and there is nothing to add to Predbat's forecast.")
+        else:
+            reason = "Heating PredHeat plans above what the same half hour used on average over the last 7 days. Predbat already expects the usual amount from its own history."
+        return {**base, "status": "ok" if acting else "not_acting", "reason": reason, "slots": slots,
+                "extra_kwh": round(sum(x["extra_kwh"] for x in slots[:48]), 2), "planned_kwh": round(sum(x["planned_kwh"] for x in slots[:48]), 2),
+                "usual_kwh": round(sum(x["usual_kwh"] for x in slots[:48]), 2)}
+
+    async def _publish_predbat_feed(self, s) -> str:
+        if self.predbat is None:
+            return "Predbat not installed"
+        if not getattr(self.settings, "publish_for_predbat", True):
+            return "sharing is off"
+        if self.controller is None or not hasattr(self.controller.adapter, "publish_state"):
+            return "cannot publish"
+        now = self.clock.now()
+        feed = self.predbat_feed(s, now)
+
+        def series(key: str) -> list[dict[str, Any]]:
+            if not feed["slots"]:
+                return []
+            out = [{"last_updated": datetime.fromisoformat(feed["slots"][0]["start"]).strftime("%Y-%m-%dT%H:%M:%S%z"), "energy": 0.0}]
+            total = 0.0
+            for x in feed["slots"]:
+                total += x[key]
+                end = datetime.fromisoformat(x["start"]) + timedelta(minutes=30)
+                out.append({"last_updated": end.strftime("%Y-%m-%dT%H:%M:%S%z"), "energy": round(total, 3)})
+            return out
+
+        attrs = {"friendly_name": "PredHeat heat pump plan", "unit_of_measurement": "kWh", "icon": "mdi:heat-pump",
+                 "extra": series("extra_kwh"), "planned": series("planned_kwh"), "status": feed["status"], "reason": feed["reason"],
+                 "generated_at": now.isoformat(), "note": "extra: heating planned above recent days, for Predbat load_forecast. planned: the full space heating plan."}
+        await self.controller.adapter.publish_state(self.FEED_ENTITY, f"{feed['extra_kwh']:.2f}", attrs)
+        return f"published {feed['extra_kwh']:.2f} kWh extra"
 
     AUDITED = (Signal.GRID_IMPORT_KWH, Signal.HP_ELEC_HEATING_KWH, Signal.HP_HEAT_HEATING_KWH, Signal.HP_ENV_HEATING_KWH,
                Signal.HP_ELEC_DHW_KWH, Signal.HP_HEAT_DHW_KWH, Signal.HP_ENV_DHW_KWH)
@@ -1747,12 +1832,13 @@ class Platform:
                       "building_models": s.query(m.BuildingModelVersion).filter_by(property_id=self.property_id).count(),
                       "heat_pump_models": s.query(m.HeatPumpModelVersion).filter_by(property_id=self.property_id).count(),
                       "control_actions": s.query(m.ControlExecutionLog).filter_by(property_id=self.property_id).count()}
+            feed = self.predbat_feed(s, now) if self.predbat is not None else None
         return {"generated_at": now.isoformat(), "data_mode": self.settings.data_mode.value, "operating_mode": self.settings.operating_mode.value,
                 "control_enabled": self.settings.control_enabled,
                 "providers": [{"name": h.provider, "ok": h.ok, "last_success_at": h.last_success_at.isoformat() if h.last_success_at else None, "last_error": h.last_error, "details": h.details} for h in provider_health],
                 "integrations": self.capability_report.integrations if self.capability_report else [],
                 "warnings": self.capability_report.warnings if self.capability_report else [],
-                "signals": signals, "predbat": self.predbat_status(now), "missing_for_thermal_model": [x.value for x in (self.capability_report.missing_for_thermal_model() if self.capability_report else [])],
+                "signals": signals, "predbat": self.predbat_status(now), "predbat_feed": feed, "missing_for_thermal_model": [x.value for x in (self.capability_report.missing_for_thermal_model() if self.capability_report else [])],
                 "recent_events": events, "record_counts": counts, "last_poll": self.last_poll,
                 "forecast_accuracy": self.forecast_accuracy(s, now=now), "control": self.control_status()}
 

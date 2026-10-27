@@ -163,3 +163,73 @@ def test_setting_is_stored_and_applied(tmp_path):
     assert store.values["use_predbat"] is True
     store.update({"use_predbat": False}, settings)
     assert settings.use_predbat is False and SettingsStore.load(tmp_path).values["use_predbat"] is False
+
+
+# ---------------------------------------------------------------- sharing PredHeat's plan with Predbat
+
+
+def _acting_platform(tmp_path, **kw):
+    settings, p = _platform(tmp_path, **kw)
+    now = p.clock.now()
+    p.telemetry.live_states = _evening_battery(now)
+    p._refresh_predbat()
+    p._memo.clear()
+    return settings, p, now
+
+
+def _publish(settings, p):
+    with session_scope(settings.database_url) as s:
+        return asyncio.run(p._publish_predbat_feed(s))
+
+
+def test_nothing_is_added_while_predheat_is_not_controlling(tmp_path):
+    settings, p, now = _acting_platform(tmp_path)  # default: monitor mode, control off
+    assert _publish(settings, p).startswith("published 0.00")
+    pub = p.controller.adapter.published["sensor.predheat_heat_pump_plan"]
+    assert pub["attributes"]["status"] == "not_acting" and all(x["energy"] == 0.0 for x in pub["attributes"]["extra"])
+    assert pub["attributes"]["planned"][-1]["energy"] > 0  # the full plan is still there for reference
+
+
+def test_when_controlling_only_heating_above_recent_days_is_added(tmp_path):
+    settings, p, now = _acting_platform(tmp_path, control_enabled=True, operating_mode="balanced", control_climate_entity="climate.zone")
+    with session_scope(settings.database_url) as s:
+        feed = p.predbat_feed(s, now)
+    assert feed["status"] == "ok" and feed["slots"]
+    for x in feed["slots"]:
+        assert x["extra_kwh"] == round(max(0.0, x["planned_kwh"] - x["usual_kwh"]), 3)
+    assert feed["apps_yaml"] == "load_forecast:\n  - sensor.predheat_heat_pump_plan$extra"
+    _publish(settings, p)
+    extra = p.controller.adapter.published["sensor.predheat_heat_pump_plan"]["attributes"]["extra"]
+    # Predbat's format: incrementing kWh keyed by "%Y-%m-%dT%H:%M:%S%z" timestamps, half an hour apart
+    stamps = [datetime.strptime(x["last_updated"], "%Y-%m-%dT%H:%M:%S%z") for x in extra]
+    assert all(b - a == timedelta(minutes=30) for a, b in zip(stamps, stamps[1:]))
+    energies = [x["energy"] for x in extra]
+    assert energies[0] == 0.0 and energies == sorted(energies)
+    assert abs(energies[-1] - sum(x["extra_kwh"] for x in feed["slots"])) < 0.01
+
+
+def test_trial_ordinary_days_add_nothing(tmp_path):
+    settings, p, now = _acting_platform(tmp_path, control_enabled=True, operating_mode="balanced", control_climate_entity="climate.zone", trial_mode=True)
+    with session_scope(settings.database_url) as s:
+        feed = p.predbat_feed(s, now)
+    assert any(x["ordinary_day"] for x in feed["slots"]) and all(x["extra_kwh"] == 0.0 for x in feed["slots"] if x["ordinary_day"])
+
+
+def test_not_published_without_predbat_or_with_sharing_off(tmp_path):
+    settings, p = _platform(tmp_path)
+    assert _publish(settings, p) == "Predbat not installed" and not p.controller.adapter.published
+    p.telemetry.live_states = _evening_battery(p.clock.now())
+    p._refresh_predbat()
+    settings.publish_for_predbat = False
+    assert _publish(settings, p) == "sharing is off" and not p.controller.adapter.published
+
+
+def test_only_predheats_own_sensors_can_be_published():
+    import pytest
+
+    from predheat.integrations.homeassistant.control import RecordingControlAdapter
+
+    with pytest.raises(ValueError):
+        asyncio.run(RecordingControlAdapter().publish_state("sensor.predbat_anything", "1", {}))
+    with pytest.raises(ValueError):
+        asyncio.run(RecordingControlAdapter().publish_state("climate.zone", "1", {}))

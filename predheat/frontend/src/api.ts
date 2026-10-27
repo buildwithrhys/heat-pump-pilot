@@ -398,6 +398,13 @@ export interface SystemHealth {
   forecast_accuracy: ForecastAccuracy;
   control: ControlStatus;
   predbat?: PredbatStatus;
+  predbat_feed?: PredbatFeed | null;
+}
+
+export interface PredbatFeed {
+  entity_id: string; attribute: string; apps_yaml: string; enabled: boolean;
+  status: "ok" | "not_acting" | "waiting"; reason: string;
+  extra_kwh: number; planned_kwh: number; usual_kwh?: number;
 }
 
 export interface CurveBand {

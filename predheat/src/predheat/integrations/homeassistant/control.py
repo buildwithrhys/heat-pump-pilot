@@ -1,11 +1,12 @@
 """The one place PredHeat writes to Home Assistant.
 
 Kept separate from the read-only client on purpose: nothing else imports this
-module, and it offers two capabilities: setting a target temperature on the
+module, and it offers three capabilities: setting a target temperature on the
 climate entity or the water_heater entity the user named (through ``Controller``,
 under its guards), and setting one of the three Vaillant heating-curve number
 entities when the user confirms a change on the heating curve check (through
-``Platform.apply_curve_setting``, bounded and logged, with undo).
+``Platform.apply_curve_setting``, bounded and logged, with undo), and publishing
+PredHeat's own ``sensor.predheat_*`` entities (its heating plan, for Predbat).
 """
 
 from __future__ import annotations
@@ -54,6 +55,15 @@ class HAControlAdapter:
         r.raise_for_status()
 
 
+    async def publish_state(self, entity_id: str, state: str, attributes: dict) -> None:
+        """Create or refresh PredHeat's own sensor in Home Assistant (its plan, for Predbat to read).
+        Only entities named ``sensor.predheat_*`` can be written this way; nothing else is touched."""
+        if not entity_id.startswith("sensor.predheat_"):
+            raise ValueError("only PredHeat's own sensors can be published")
+        r = await self.client._http.post(f"/api/states/{entity_id}", json={"state": state, "attributes": attributes})
+        r.raise_for_status()
+
+
 class RecordingControlAdapter:
     """Test and simulation stand-in: remembers targets, writes nothing anywhere."""
 
@@ -63,6 +73,7 @@ class RecordingControlAdapter:
         self.targets: dict[str, float] = {}
         self.initial = initial
         self.calls: list[tuple[str, float]] = []
+        self.published: dict[str, dict] = {}
         self.fail = False
 
     async def current_target(self, entity_id: str) -> tuple[float | None, dict]:
@@ -84,3 +95,8 @@ class RecordingControlAdapter:
             raise RuntimeError("simulated write failure")
         self.targets[entity_id] = value
         self.calls.append((entity_id, value))
+
+    async def publish_state(self, entity_id: str, state: str, attributes: dict) -> None:
+        if not entity_id.startswith("sensor.predheat_"):
+            raise ValueError("only PredHeat's own sensors can be published")
+        self.published[entity_id] = {"state": state, "attributes": attributes}

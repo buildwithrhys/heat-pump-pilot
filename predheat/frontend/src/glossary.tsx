@@ -65,6 +65,7 @@ export const GLOSSARY: Record<string, string> = {
   curve_confidence: "How sure PredHeat is about the suggestion, from how many hours of steady heating it has seen, how consistent they were and how wide a range of outdoor temperatures they covered.",
   predbat: "Predbat plans your home battery around your tariff and solar forecast. When it is installed, PredHeat reads its plan (it never changes anything in Predbat) to see where extra electricity would come from in each half hour.",
   heating_rate: "What one more kWh for the heat pump would really cost in that half hour. Solar you would otherwise export costs only the export payment you give up; the battery costs what Predbat values stored energy at (what it cost to fill, allowing for losses); anything else comes from the grid at your tariff. Never more than the grid price.",
+  predbat_feed: "Predbat forecasts your house's usage from past days, which already include the heat pump. PredHeat publishes only the heating it plans above what the same half hour used on average over the last 7 days, so nothing is counted twice. Heating PredHeat moves away from a time cannot be taken off Predbat's forecast, so Predbat may keep a little more in the battery than needed then, which errs on the safe side.",
   capacity_source: "The most heat the pump has been seen to deliver in a half hour, or the rated output from Settings when there is too little data.",
 };
 

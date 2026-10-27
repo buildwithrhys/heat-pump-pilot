@@ -159,7 +159,24 @@ export default function SystemPage() {
                 <div className="sub">per kWh from your battery, Predbat's figure now{s.predbat.battery_size_kwh ? `, ${s.predbat.battery_size_kwh.toFixed(1)} kWh battery` : ""}</div>
               </div>
             )}
+            {s.predbat_feed && (
+              <div className="card">
+                <h3>Shared with Predbat<Term k="predbat_feed" /></h3>
+                <div className="big" style={s.predbat_feed.enabled && s.predbat_feed.status === "ok" ? undefined : { fontSize: "1.1rem" }}>{!s.predbat_feed.enabled ? "Off" : s.predbat_feed.status === "ok" ? `${num(s.predbat_feed.extra_kwh, 1)} kWh` : "Nothing to add"}</div>
+                <div className="sub" title={s.predbat_feed.reason}>
+                  {!s.predbat_feed.enabled ? "\"Share PredHeat's plan with Predbat\" is off on the Settings tab"
+                    : s.predbat_feed.status === "ok" ? `heating planned above recent days, next 24 hours (of ${num(s.predbat_feed.planned_kwh, 1)} kWh planned)`
+                    : s.predbat_feed.status === "not_acting" ? "PredHeat is not controlling the heating, so the heat pump will use what it usually does"
+                    : "waiting for the learned house model"}
+                </div>
+              </div>
+            )}
           </div>
+          {s.predbat_feed?.enabled && (
+            <p className="sources-line" style={{ marginTop: 8 }}>
+              To let Predbat use it, add this to Predbat's <code>apps.yaml</code> (alongside any load_forecast you already have) and restart Predbat: <code style={{ whiteSpace: "pre" }}>{s.predbat_feed.apps_yaml}</code>
+            </p>
+          )}
         </div>
       )}
 
