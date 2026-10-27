@@ -302,10 +302,10 @@ class Platform:
     FEED_ENTITY = "sensor.predheat_heat_pump_plan"
     FEED_ATTRIBUTE = "extra"
 
-    def _usual_heating_kwh(self, s, now: datetime, days: int = 7) -> dict[tuple[int, int], float]:
-        """Average space heating electricity per local half hour of the day over recent days: roughly
+    def _usual_heating_kwh(self, s, now: datetime, days: int = 7, signal: Signal = Signal.HP_ELEC_HEATING_KWH) -> dict[tuple[int, int], float]:
+        """Average heat pump electricity per local half hour of the day over recent days: roughly
         what Predbat's own load forecast, built from past days, already expects from the heat pump."""
-        rows = counter_to_intervals(self._counter_measurements(s, Signal.HP_ELEC_HEATING_KWH, now - timedelta(days=days, hours=3), now), "e")
+        rows = counter_to_intervals(self._counter_measurements(s, signal, now - timedelta(days=days, hours=3), now), "e")
         acc: dict[tuple[int, int], float] = {}
         for i in rows:
             st = as_utc(i.start)
@@ -331,6 +331,9 @@ class Platform:
                     "reason": "Nothing to share yet: PredHeat shares its plan once the learned house model is ready (see Your house)."}
         acting, why = (self.controller.configured() if self.controller is not None else (False, "no controller"))
         usual = self._usual_heating_kwh(s, now)
+        # hot water counts only when PredHeat moves the cylinder reheat (a hot water entity is set)
+        with_dhw = acting and bool(getattr(self.settings, "control_dhw_entity", None))
+        usual_dhw = self._usual_heating_kwh(s, now, signal=Signal.HP_ELEC_DHW_KWH) if with_dhw else {}
         trial = bool(getattr(self.settings, "trial_mode", False))
         from ..control import Controller
 
@@ -338,17 +341,22 @@ class Platform:
         for p in predicted:
             st = datetime.fromisoformat(p["start"])
             loc = st.astimezone(LONDON)
-            u = usual.get((loc.hour, 0 if loc.minute < 30 else 30), 0.0)
+            hh = (loc.hour, 0 if loc.minute < 30 else 30)
+            dhw = p.get("dhw_elec_kwh", 0.0) if with_dhw else 0.0
+            u = usual.get(hh, 0.0) + (usual_dhw.get(hh, 0.0) if with_dhw else 0.0)
+            planned = p["elec_kwh"] + dhw
             ordinary_day = trial and Controller.trial_day_is_baseline(st)
-            extra = max(0.0, p["elec_kwh"] - u) if acting and not ordinary_day else 0.0
-            slots.append({"start": p["start"], "planned_kwh": round(p["elec_kwh"], 3), "usual_kwh": round(u, 3), "extra_kwh": round(extra, 3),
-                          "ordinary_day": ordinary_day})
+            extra = max(0.0, planned - u) if acting and not ordinary_day else 0.0
+            slots.append({"start": p["start"], "planned_kwh": round(planned, 3), "hot_water_kwh": round(dhw, 3), "usual_kwh": round(u, 3),
+                          "extra_kwh": round(extra, 3), "ordinary_day": ordinary_day})
         if not acting:
             reason = ("PredHeat is not controlling the heating (Operating mode is not Balanced or Max savings, or Allow control is off), "
                       "so the heat pump will use what it usually does and there is nothing to add to Predbat's forecast.")
         else:
-            reason = "Heating PredHeat plans above what the same half hour used on average over the last 7 days. Predbat already expects the usual amount from its own history."
-        return {**base, "status": "ok" if acting else "not_acting", "reason": reason, "slots": slots,
+            reason = ("Heating " + ("and hot water " if with_dhw else "") + "PredHeat plans above what the same half hour used on average over the last 7 days. "
+                      "Predbat already expects the usual amount from its own history."
+                      + ("" if with_dhw else " Hot water is not included because PredHeat does not move the cylinder reheat (no hot water entity on the Settings tab)."))
+        return {**base, "status": "ok" if acting else "not_acting", "reason": reason, "slots": slots, "includes_hot_water": with_dhw,
                 "extra_kwh": round(sum(x["extra_kwh"] for x in slots[:48]), 2), "planned_kwh": round(sum(x["planned_kwh"] for x in slots[:48]), 2),
                 "usual_kwh": round(sum(x["usual_kwh"] for x in slots[:48]), 2)}
 
@@ -375,7 +383,7 @@ class Platform:
 
         attrs = {"friendly_name": "PredHeat heat pump plan", "unit_of_measurement": "kWh", "icon": "mdi:heat-pump",
                  "extra": series("extra_kwh"), "planned": series("planned_kwh"), "status": feed["status"], "reason": feed["reason"],
-                 "generated_at": now.isoformat(), "note": "extra: heating planned above recent days, for Predbat load_forecast. planned: the full space heating plan."}
+                 "generated_at": now.isoformat(), "note": "extra: heat pump use planned above recent days, for Predbat load_forecast. planned: the full plan (space heating, plus hot water when PredHeat controls the cylinder)."}
         await self.controller.adapter.publish_state(self.FEED_ENTITY, f"{feed['extra_kwh']:.2f}", attrs)
         return f"published {feed['extra_kwh']:.2f} kWh extra"
 

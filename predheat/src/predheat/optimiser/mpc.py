@@ -171,8 +171,9 @@ def classify_slots(slots: list[dict[str, Any]], inp: MPCInputs) -> list[str]:
     return modes
 
 
-def schedule_hot_water(inp: MPCInputs, now: datetime) -> list[PlanAction]:
-    """Cheapest slots per kWh of hot water heat before 07:00 local tomorrow (or within the horizon)."""
+def schedule_hot_water(inp: MPCInputs, now: datetime, elec_by_slot: dict[int, float] | None = None) -> list[PlanAction]:
+    """Cheapest slots per kWh of hot water heat before 07:00 local tomorrow (or within the horizon).
+    ``elec_by_slot``, when given, is filled with the electricity planned for hot water in each slot."""
     if inp.dhw_setpoint_c is None:
         return []
     tank = inp.dhw_tank_c if inp.dhw_tank_c is not None else inp.dhw_setpoint_c - 10.0
@@ -190,6 +191,9 @@ def schedule_hot_water(inp: MPCInputs, now: datetime) -> list[PlanAction]:
     got = 0.0
     for _, k in candidates:
         chosen.append(k)
+        heat = min(per_slot_kwh, need_kwh - got)
+        if elec_by_slot is not None:
+            elec_by_slot[k] = round(heat / (inp.cop_fn(inp.t_out[k]) * DHW_COP_FACTOR), 3)
         got += per_slot_kwh
         if got >= need_kwh:
             break
@@ -253,7 +257,8 @@ def build_mpc_plan(inp: MPCInputs, now: datetime, model_notes: list[str] | None 
             actions.append(PlanAction(kind, run[0]["start"], run[-1]["end"], round(rate, 2), reason,
                                       saving_p_per_kwh=boost_saving, saving_basis="vs_dear_period" if boost_saving else None))
         i = j + 1
-    actions += schedule_hot_water(inp, now)
+    dhw_elec: dict[int, float] = {}
+    actions += schedule_hot_water(inp, now, dhw_elec)
     actions.sort(key=lambda a: a.start)
     upcoming = next((a for a in actions if a.end > now), None)
     cost, base_cost = res["cost_p"], res["baseline_cost_p"]
@@ -266,7 +271,7 @@ def build_mpc_plan(inp: MPCInputs, now: datetime, model_notes: list[str] | None 
     ] + list(model_notes or [])
     predicted = [{"start": s["start"].isoformat(), "t_in": s["t_in"], "t_in_baseline": s["t_in_baseline"], "heat_kw": s["heat_kw"],
                   "heat_kw_baseline": s["heat_kw_baseline"], "rate_p": s["rate_p"], "t_out": s["t_out"], "cost_p": s["cost_p"],
-                  "cost_p_baseline": s["cost_p_baseline"], "elec_kwh": s["elec_kwh"], "mode": modes[k]}
+                  "cost_p_baseline": s["cost_p_baseline"], "elec_kwh": s["elec_kwh"], "dhw_elec_kwh": dhw_elec.get(k, 0.0), "mode": modes[k]}
                  for k, s in enumerate(slots)]
     hours = len(slots) * STEP_H
     return {**base, "status": "model_based",

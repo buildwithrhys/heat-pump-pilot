@@ -53,7 +53,7 @@ PredHeat plans the heating with these prices, so it no longer avoids heating at 
 
 Predbat adds an outside forecast on top of its own, and its own already includes the heat pump from past days. So the `extra` attribute holds only the space heating PredHeat plans above what the same half hour used on average over the last 7 days. Heating moved away from a time cannot be taken off Predbat's forecast (Predbat ignores negative values), so at those times Predbat may keep a little more in the battery than needed, which errs on the safe side. The `planned` attribute holds the full space heating plan, for setups whose history already excludes the heat pump.
 
-The sensor carries extra load only while PredHeat is controlling the heating (Balanced or Max savings with Allow control on), and not on trial days run by your ordinary thermostat; otherwise it is zero, because the heat pump will use what it usually does. System health shows what is being shared. Turn it off with "Share PredHeat's plan with Predbat" on the Settings tab. Hot water is not included yet.
+The sensor carries extra load only while PredHeat is controlling the heating (Balanced or Max savings with Allow control on), and not on trial days run by your ordinary thermostat; otherwise it is zero, because the heat pump will use what it usually does. System health shows what is being shared. Turn it off with "Share PredHeat's plan with Predbat" on the Settings tab. Hot water is included when PredHeat moves the cylinder reheat, which is when a hot water entity is chosen on the Settings tab; otherwise the cylinder heats on its own schedule, which Predbat already sees in its history.
 
 ## The heating curve check
 

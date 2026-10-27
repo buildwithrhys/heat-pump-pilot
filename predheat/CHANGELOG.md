@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- The plan shared with Predbat now includes hot water when PredHeat moves the cylinder reheat (a hot water entity is chosen on the Settings tab), on the same basis as heating: only what is planned above what the same half hour used on average over the last 7 days.
+
 ## 0.6.0
 
 - **Share PredHeat's plan with Predbat.** PredHeat publishes `sensor.predheat_heat_pump_plan` in Home Assistant in the format Predbat reads as an extra load forecast. Add `sensor.predheat_heat_pump_plan$extra` to `load_forecast` in Predbat's apps.yaml and Predbat will plan the battery around the heating PredHeat intends. Because Predbat's own forecast already includes the heat pump from past days, only heating above what recent days used is shared, so nothing is counted twice. It carries nothing while PredHeat is not controlling the heating, or on trial days run by your ordinary thermostat. System health shows what is being shared and the exact lines to add; "Share PredHeat's plan with Predbat" on the Settings tab turns it off. Checked against Predbat's own parsing code.

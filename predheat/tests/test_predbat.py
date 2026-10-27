@@ -233,3 +233,26 @@ def test_only_predheats_own_sensors_can_be_published():
         asyncio.run(RecordingControlAdapter().publish_state("sensor.predbat_anything", "1", {}))
     with pytest.raises(ValueError):
         asyncio.run(RecordingControlAdapter().publish_state("climate.zone", "1", {}))
+
+
+def test_hot_water_is_shared_only_when_predheat_moves_the_cylinder_reheat(tmp_path):
+    settings, p, now = _acting_platform(tmp_path, control_enabled=True, operating_mode="balanced", control_climate_entity="climate.zone")
+    with session_scope(settings.database_url) as s:
+        without = p.predbat_feed(s, now)
+    assert not without["includes_hot_water"] and all(x["hot_water_kwh"] == 0.0 for x in without["slots"])
+    settings.control_dhw_entity = "water_heater.cylinder"
+    from predheat.domain import Measurement, Provenance, Quality, Signal
+    from predheat.service import repository as repo
+
+    with session_scope(settings.database_url) as s:  # the simulator reports no cylinder target; give it 55 degC
+        repo.upsert_measurements(s, p.property_id, [Measurement(signal=Signal.DHW_SETPOINT, ts=now, value=55.0, quality=Quality.SENSOR,
+                                                                provenance=Provenance.SIMULATOR, source_ref="test")])
+    p._memo.clear()
+    with session_scope(settings.database_url) as s:
+        plan = p.shadow_plan(s, now)
+        feed = p.predbat_feed(s, now)
+    reheat = [x for x in plan["predicted"] if x["dhw_elec_kwh"] > 0]
+    assert reheat, "the simulated cylinder needs a reheat"
+    assert feed["includes_hot_water"] and sum(x["hot_water_kwh"] for x in feed["slots"]) > 0
+    for x in feed["slots"]:
+        assert x["extra_kwh"] == round(max(0.0, x["planned_kwh"] - x["usual_kwh"]), 3)
