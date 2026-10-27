@@ -312,3 +312,17 @@ def test_dashboard_page_is_not_cached_and_api_names_the_current_build(tmp_path):
     assert "immutable" in c.get("/assets/index-AbC123_x.js").headers["cache-control"]
     h = c.get("/api/health").headers
     assert h["x-predheat-bundle"] == "index-AbC123_x.js" and h["x-predheat-version"]
+
+
+def test_while_waiting_predbat_still_gets_a_valid_flat_series(tmp_path):
+    settings = Settings(data_mode=DataMode.SIMULATED, database_url=f"sqlite:///{tmp_path / 'w.sqlite'}", sim_days=2, data_dir=tmp_path)
+    p = build_platform(settings)
+    asyncio.run(p.bootstrap())  # two days: the house model is still learning
+    p.telemetry.live_states = _evening_battery(p.clock.now())
+    p._refresh_predbat()
+    with session_scope(settings.database_url) as s:
+        assert p.predbat_feed(s)["status"] == "waiting"
+    _publish(settings, p)
+    a = p.controller.adapter.published["sensor.predheat_heat_pump_plan"]["attributes"]
+    assert a["status"] == "waiting" and len(a["extra"]) == 97 and all(x["energy"] == 0.0 for x in a["extra"])
+    datetime.strptime(a["extra"][0]["last_updated"], "%Y-%m-%dT%H:%M:%S%z")

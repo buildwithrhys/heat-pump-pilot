@@ -372,7 +372,9 @@ class Platform:
 
         def series(key: str) -> list[dict[str, Any]]:
             if not feed["slots"]:
-                return []
+                # nothing planned yet: a flat 48 hours of zeros, so Predbat always has valid data in this slot
+                start = now.replace(minute=0 if now.minute < 30 else 30, second=0, microsecond=0)
+                return [{"last_updated": (start + timedelta(minutes=30 * i)).strftime("%Y-%m-%dT%H:%M:%S%z"), "energy": 0.0} for i in range(97)]
             out = [{"last_updated": datetime.fromisoformat(feed["slots"][0]["start"]).strftime("%Y-%m-%dT%H:%M:%S%z"), "energy": 0.0}]
             total = 0.0
             for x in feed["slots"]:
