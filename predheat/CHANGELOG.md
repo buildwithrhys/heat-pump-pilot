@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+- **The standing charge is never pro-rated.** The Overview's "Today so far" row showed a share of the daily standing charge that grew through the day (£0.32 at 14:12), which looked like a running cost. That card is gone, and nothing in that row includes the standing charge. Wherever a whole-house cost is shown (whole home import on Energy costs) the standing charge appears once, as "Standing charge (fixed, per day)", at the full daily rate from the Octopus integration times the number of days. The tariff comparison now also charges whole days rather than a fraction of a day.
+- **Fairer "same heat on gas".** New optional setting: gas standing charge in p/day (Settings, Comparisons; not set by default). When set, it is added to the gas side for each day compared, since a household on gas pays it on top of the gas used. Your electricity standing charge stays out of both sides, because you pay it either way. The card's small print says whether the gas standing charge is included.
+- Checked, with tests: the optimiser's half-hourly costs and the plan shared with Predbat (`sensor.predheat_heat_pump_plan`) use unit rates only and are unaffected by the standing charge.
+
 ## 0.6.4
 
 - While PredHeat is still learning your house, the plan it shares with Predbat is a flat 48 hours of zeros rather than empty, so Predbat always has valid data where you pointed it.

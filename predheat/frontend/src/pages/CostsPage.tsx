@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api, goToTab, num, pounds, type Costs, type DailyRow } from "../api";
+import { gasStandingLine, api, goToTab, num, pounds, type Costs, type DailyRow } from "../api";
 import { Term, tip } from "../glossary";
 import { TrialSection } from "./trial";
 import { EnergyFlow } from "./flow";
@@ -87,9 +87,9 @@ export default function CostsPage() {
         {s.whole_home_import.plausible === false ? (
           <div className="card urgent"><h3>Whole home import</h3><div className="big" style={{ fontSize: "1.1rem" }}>Data looks wrong</div><div className="sub">{num(s.whole_home_import.kwh, 0, " kWh")} is above the {num(s.whole_home_import.limit_kwh, 0, " kWh")} bound for this period. <button type="button" className="linkish" onClick={() => goToTab("System health")}>See System health</button></div></div>
         ) : (
-          <div className="card"><h3>Whole home import</h3><div className="big">{pounds(s.whole_home_import.cost_pence)}</div><div className="sub">{num(s.whole_home_import.kwh, 1, " kWh")} metered + standing {pounds(s.standing_charge_pence)}</div></div>
+          <div className="card"><h3>Whole home import</h3><div className="big">{pounds(s.whole_home_import.cost_pence)}</div><div className="sub">{num(s.whole_home_import.kwh, 1, " kWh")} metered · plus {s.standing_charge?.label ?? "Standing charge (fixed, per day)"}<Term k="standing_charge" />: {s.standing_charge?.p_per_day != null ? `${s.standing_charge.p_per_day.toFixed(2)}p${s.standing_charge.days > 1 ? ` × ${s.standing_charge.days} days = ${pounds(s.standing_charge.pence)}` : ""}` : pounds(s.standing_charge_pence)}</div></div>
         )}
-        <div className={`card ${s.gas_equivalent.saving_pence >= 0 ? "info" : "warn"}`}><h3>Same heat on gas<Term k="gas_comparison" /></h3><div className="big">{pounds(s.gas_equivalent.cost_pence)}</div><div className="sub">{s.gas_equivalent.saving_pence >= 0 ? `heat pump ${pounds(s.gas_equivalent.saving_pence)} cheaper` : `heat pump ${pounds(-s.gas_equivalent.saving_pence)} dearer`} · {num(s.gas_equivalent.kwh_gas, 0, " kWh")} of gas at {s.gas_equivalent.price_p_per_kwh}p, {Math.round(s.gas_equivalent.boiler_efficiency * 100)}% boiler</div></div>
+        <div className={`card ${s.gas_equivalent.saving_pence >= 0 ? "info" : "warn"}`}><h3>Same heat on gas<Term k="gas_comparison" /></h3><div className="big">{pounds(s.gas_equivalent.cost_pence)}</div><div className="sub">{s.gas_equivalent.saving_pence >= 0 ? `heat pump ${pounds(s.gas_equivalent.saving_pence)} cheaper` : `heat pump ${pounds(-s.gas_equivalent.saving_pence)} dearer`} · {num(s.gas_equivalent.kwh_gas, 0, " kWh")} of gas at {s.gas_equivalent.price_p_per_kwh}p, {Math.round(s.gas_equivalent.boiler_efficiency * 100)}% boiler, {gasStandingLine(s.gas_equivalent)}</div></div>
       </div>
 
       <TrialSection />
@@ -137,7 +137,7 @@ export default function CostsPage() {
           </tbody>
         </table>
       </div>
-      <p className="muted" style={{ fontSize: "0.82rem" }}>Electricity is priced at the half-hourly rate in force when it was used, including confirmed Intelligent Octopus dispatch periods. Appliance costs exclude the standing charge, which is shown for the whole property.</p>
+      <p className="muted" style={{ fontSize: "0.82rem" }}>Electricity is priced at the half-hourly rate in force when it was used, including confirmed Intelligent Octopus dispatch periods. Heating and hot water costs never include the standing charge, which is a fixed amount per day whatever you use; it is shown once, at the full daily rate, under whole home import.</p>
     </>
   );
 }

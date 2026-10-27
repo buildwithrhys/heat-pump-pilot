@@ -23,7 +23,7 @@ from ..domain import SIGNAL_CATALOGUE, CapabilityReport, Measurement, Provenance
 from ..integrations.base import ProviderHealth
 from ..model import DESIGN_INDOOR_C, COPModel, design_outdoor_c, fit_cop_model, fit_rc_model, prior_cop_model, survey_to_coefficient
 from ..optimiser import MPCInputs, build_mpc_plan, build_shadow_plan
-from ..pricing import RATES_AS_OF, REGION_NAMES, PriceClass, planning_prices, price_actual, reconcile_template, SlotPrice, build_rate_book, classify_slots, load_templates, replay, replay_with_book, scenario_intervals, standing_charge_for_period
+from ..pricing import RATES_AS_OF, REGION_NAMES, PriceClass, planning_prices, price_actual, reconcile_template, SlotPrice, build_rate_book, classify_slots, load_templates, replay, replay_with_book, scenario_intervals, standing_charge_for_period, standing_charge_per_day
 from ..timeutils import LONDON, local_day_bounds, now_utc
 from . import repository as repo
 
@@ -1651,11 +1651,17 @@ class Platform:
         gc, gk, gok = cost_of(grid_imp)
         heat_kwh_th = round(sum(i.kwh for i in heat_th), 3)
         dhw_kwh_th = round(sum(i.kwh for i in dhw_th), 3)
-        sc_pence = 0.0
+        # The electricity standing charge is a fixed amount per day: every day the period has reached
+        # counts in full, never pro-rated by the time of day. It is never part of a heating figure.
+        sc_pence, sc_per_day, sc_days = 0.0, None, 0
         if tariff_code:
             charges = s.query(m.TariffStandingCharge).filter_by(tariff_code=tariff_code).all()
             from ..domain import StandingCharge
-            sc_pence = standing_charge_for_period([StandingCharge(start=as_utc(c.start), end=as_utc(c.end), pence_per_day=c.pence_per_day, tariff_code=c.tariff_code) for c in charges], start, min(end, self.clock.now()))
+            sc_rows = [StandingCharge(start=as_utc(c.start), end=as_utc(c.end), pence_per_day=c.pence_per_day, tariff_code=c.tariff_code) for c in charges]
+            reached = min(end, self.clock.now())
+            sc_pence = standing_charge_for_period(sc_rows, start, reached)
+            sc_per_day = standing_charge_per_day(sc_rows, max(start, min(reached, end - timedelta(seconds=1))))
+            sc_days = max(0, (min(reached.astimezone(LONDON).date() + timedelta(days=1), end_day) - start_day).days) if reached > start else 0
         # per local day: does heat = electricity + outside air? COP and heat-based figures only from days that add up
         def per_day(ints) -> dict:
             out: dict = {}
@@ -1680,7 +1686,7 @@ class Platform:
             cost_ok = cost_pence * (e_ok / e_all) if e_all else 0.0
             cop = round(h_ok / e_ok, 2) if e_ok >= 0.2 and h_ok / e_ok >= 1.0 else None
             env_total = round(sum(v_d.values()), 3) if v_d is not None else None
-            return {"cop": cop, "days_ok": len(ok_days), "days_flagged": flagged, "kwh_env": env_total,
+            return {"cop": cop, "days_ok": len(ok_days), "ok_days": ok_days, "days_flagged": flagged, "kwh_env": env_total,
                     "kwh_heat_ok": round(h_ok, 3), "kwh_electric_ok": round(e_ok, 3),
                     "pence_per_kwh_heat": round(cost_ok / h_ok, 2) if h_ok >= 0.5 else None,
                     "status": "ok" if not flagged else ("partial" if ok_days else "inconsistent")}
@@ -1691,7 +1697,13 @@ class Platform:
         cost_for_gas = (hc * (sh_bal["kwh_electric_ok"] / hk) if hk else 0.0) + (dc * (hw_bal["kwh_electric_ok"] / dk) if dk else 0.0)
         eff = max(0.5, min(1.0, self.settings.boiler_efficiency))
         gas_kwh = heat_for_gas / eff
-        gas_cost = round(gas_kwh * self.settings.gas_price_p_per_kwh, 2)
+        gas_unit_cost = gas_kwh * self.settings.gas_price_p_per_kwh
+        # A household on gas also pays a gas standing charge, for each day compared, in full. The
+        # electricity standing charge is paid either way, so it is on neither side.
+        gas_sc = self.settings.gas_standing_charge_p_per_day
+        gas_days = len(set(sh_bal["ok_days"]) | set(hw_bal["ok_days"])) if heat_for_gas > 0 else 0
+        gas_sc_pence = (gas_sc or 0.0) * gas_days
+        gas_cost = round(gas_unit_cost + gas_sc_pence, 2)
         # coverage: which days in the period have any data at all
         all_days = [start_day + timedelta(days=i) for i in range((end_day - start_day).days)]
         with_data = sorted({as_utc(i.start).astimezone(LONDON).date() for i in heat_e + dhw_e + grid_imp + heat_th if i.kwh > 0})
@@ -1702,8 +1714,12 @@ class Platform:
             "tariff_code": tariff_code,
             "gas_equivalent": {"kwh_gas": round(gas_kwh, 3), "cost_pence": gas_cost, "price_p_per_kwh": self.settings.gas_price_p_per_kwh,
                                "boiler_efficiency": eff, "saving_pence": round(gas_cost - cost_for_gas, 2),
-                               "days_used": sh_bal["days_ok"],
-                               "note": "Modelled what-if: the same delivered heat from a gas boiler at the configured efficiency and unit price, on days whose heat pump figures add up. Standing charges excluded on both sides."},
+                               "days_used": sh_bal["days_ok"], "unit_cost_pence": round(gas_unit_cost, 2),
+                               "standing_charge_p_per_day": gas_sc, "standing_charge_included": bool(gas_sc), "standing_charge_pence": round(gas_sc_pence, 2),
+                               "standing_charge_days": gas_days,
+                               "note": ("Modelled what-if: the same delivered heat from a gas boiler at the configured efficiency and unit price, on days whose heat pump figures add up. "
+                                        + (f"Includes a gas standing charge of {gas_sc:g}p for each of the {gas_days} days compared. " if gas_sc else "Gas standing charge not included (not set on the Settings tab). ")
+                                        + "Your electricity standing charge is left out of both sides, because you pay it either way.")},
             "space_heating": {"kwh_electric": hk, "kwh_heat": heat_kwh_th, "kwh_env": sh_bal["kwh_env"], "cop": sh_bal["cop"],
                               "cost_pence": hc, "pence_per_kwh_heat": sh_bal["pence_per_kwh_heat"], "balance": {k: v for k, v in sh_bal.items() if k not in ("cop", "kwh_env", "pence_per_kwh_heat")},
                               "quality": q_of(heat_e), "prices_complete": hok},
@@ -1717,6 +1733,7 @@ class Platform:
                                   "plausible": gk <= _import_limit_kwh((end_day - start_day).days),
                                   "limit_kwh": _import_limit_kwh((end_day - start_day).days)},
             "standing_charge_pence": round(sc_pence, 2),
+            "standing_charge": {"pence": round(sc_pence, 2), "p_per_day": sc_per_day, "days": sc_days, "label": "Standing charge (fixed, per day)"},
             "reconciliation": recon,
         }
 

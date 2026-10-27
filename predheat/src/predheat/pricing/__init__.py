@@ -8,6 +8,7 @@ from .tariff_engine import (
     cost_energy_intervals,
     planning_prices,
     standing_charge_for_period,
+    standing_charge_per_day,
 )
 
 __all__ = [
@@ -29,4 +30,5 @@ __all__ = [
     "cost_energy_intervals",
     "planning_prices",
     "standing_charge_for_period",
+    "standing_charge_per_day",
 ]

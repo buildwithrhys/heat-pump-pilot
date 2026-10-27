@@ -75,13 +75,13 @@ def test_dispatch_classification_distinguishes_planned_from_confirmed():
     assert len(slots) == 48
 
 
-def test_standing_charge_pro_rata_across_clock_change():
+def test_standing_charge_is_a_whole_day_across_clock_change():
     charges = [StandingCharge(start=datetime(2026, 10, 1, tzinfo=UTC), end=None, pence_per_day=54.3619, tariff_code="x")]
     # Whole local day of 25 hours still costs one day's standing charge
     s = datetime(2026, 10, 25, tzinfo=LONDON).astimezone(UTC)
     e = datetime(2026, 10, 26, tzinfo=LONDON).astimezone(UTC)
     assert (e - s) == timedelta(hours=25)
     assert abs(standing_charge_for_period(charges, s, e) - 54.3619) < 1e-6
-    # Half a normal day
+    # Half a normal day still pays the whole day: the standing charge is never pro-rated
     s2 = datetime(2026, 10, 24, tzinfo=LONDON).astimezone(UTC)
-    assert abs(standing_charge_for_period(charges, s2, s2 + timedelta(hours=12)) - 54.3619 / 2) < 1e-3
+    assert abs(standing_charge_for_period(charges, s2, s2 + timedelta(hours=12)) - 54.3619) < 1e-6

@@ -76,7 +76,20 @@ export interface GasEquivalent {
   boiler_efficiency: number;
   saving_pence: number;
   note: string;
+  unit_cost_pence?: number;
+  standing_charge_p_per_day?: number | null;
+  standing_charge_included?: boolean;
+  standing_charge_pence?: number;
+  standing_charge_days?: number;
 }
+
+/** Small print for the gas comparison: whether the gas standing charge is in it. */
+export const gasStandingLine = (g: GasEquivalent) =>
+  g.standing_charge_included
+    ? `includes gas standing charge ${g.standing_charge_p_per_day}p/day${g.standing_charge_days && g.standing_charge_days > 1 ? ` × ${g.standing_charge_days} days` : ""}`
+    : "gas standing charge not included (not set in Settings)";
+
+export interface StandingChargeLine { pence: number; p_per_day: number | null; days: number; label: string }
 
 export interface Costs {
   period: { start: string; end: string };
@@ -90,6 +103,7 @@ export interface Costs {
   heat_pump_total: { kwh_electric: number; cost_pence: number };
   whole_home_import: { kwh: number; cost_pence: number; quality: string; prices_complete: boolean; source?: string; plausible?: boolean; limit_kwh?: number };
   standing_charge_pence: number;
+  standing_charge?: StandingChargeLine;
   reconciliation: { reconciled: boolean; worst_difference_kwh: number; slots: number };
 }
 

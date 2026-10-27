@@ -9,7 +9,7 @@ const GROUPS: { key: "control" | "comparisons" | "advanced"; title: string; blur
 ];
 const ORDER: Record<string, string[]> = {
   control: ["control_enabled", "control_climate_entity", "control_dhw_entity", "operating_mode", "control_max_offset_c", "trial_mode"],
-  comparisons: ["gas_price_p_per_kwh", "boiler_efficiency", "survey_heat_loss_kw", "survey_outdoor_c", "heat_pump_rated_kw"],
+  comparisons: ["gas_price_p_per_kwh", "gas_standing_charge_p_per_day", "boiler_efficiency", "survey_heat_loss_kw", "survey_outdoor_c", "heat_pump_rated_kw"],
   advanced: ["use_predbat", "publish_for_predbat", "design_outdoor_c"],
 };
 

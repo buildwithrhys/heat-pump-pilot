@@ -107,10 +107,7 @@ def replay(template: TariffTemplate, intervals: list[tuple[datetime, datetime, f
         kwh += k
         if r <= cheap_cut + 1e-9 and template.windows:
             cheap_kwh += k
-    if intervals:
-        days = (max(e for _, e, _ in intervals) - min(s for s, _, _ in intervals)).total_seconds() / 86400
-    else:
-        days = 0.0
+    days = _whole_days(intervals)  # the standing charge is per day, never a fraction of one
     standing = template.standing_p_per_day * days
     return {"code": template.code, "name": template.name, "unit_pence": round(unit, 1), "standing_pence": round(standing, 1),
             "total_pence": round(unit + standing, 1), "kwh": round(kwh, 2), "days": round(days, 2),
@@ -185,11 +182,16 @@ def replay_with_book(book, template: TariffTemplate, intervals: list[tuple[datet
         lo = min(rates_seen)
         cheap_cut = lo + 0.25 * (max(rates_seen) - lo)
         cheap = sum(k for (st, _e, k), rate in zip(rows, rates_seen) if rate <= cheap_cut)
-    days = (max(e for _, e, _ in rows) - min(s for s, _, _ in rows)).total_seconds() / 86400 if rows else 0.0
+    days = _whole_days(rows)
     standing = (standing_p_per_day if standing_p_per_day is not None else template.standing_p_per_day) * days
     return {"code": template.code, "name": template.name, "unit_pence": round(unit, 1), "standing_pence": round(standing, 1),
             "total_pence": round(unit + standing, 1), "kwh": round(kwh, 2), "days": round(days, 2),
             "cheap_share": round(cheap / kwh, 3) if kwh else None, "effective_p_per_kwh": round(unit / kwh, 2) if kwh else None}
+
+
+def _whole_days(intervals) -> int:
+    """Local days that have any usage in them: each pays one full day of standing charge."""
+    return len({st.astimezone(LONDON).date() for st, _e, _k in intervals})
 
 
 def price_actual(book, triples: list[tuple[datetime, datetime, float]]) -> dict[str, Any]:

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import bisect
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
 from zoneinfo import ZoneInfo
 
@@ -202,21 +202,29 @@ def cost_energy_intervals(
 
 
 def standing_charge_for_period(charges: list[StandingCharge], start: datetime, end: datetime, tz: ZoneInfo = LONDON) -> float:
-    """Pence of standing charge accrued between start and end, pro-rated per local day."""
+    """Pence of standing charge for every local day the period touches, each at the full daily rate.
+
+    The standing charge is a fixed amount per day, not something that builds up through the day,
+    so it is never pro-rated: a period that has started today counts today in full."""
     start, end = to_utc(start), to_utc(end)
     total = 0.0
     day = start.astimezone(tz).date()
     while True:
         d0 = datetime.combine(day, datetime.min.time(), tzinfo=tz).astimezone(start.tzinfo)
-        d1 = datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=tz).astimezone(start.tzinfo)
         if d0 >= end:
             break
-        frac = overlap_seconds(d0, d1, start, end) / (d1 - d0).total_seconds()
         sc = _standing_charge_at(charges, d0)
         if sc is not None:
-            total += sc.pence_per_day * frac
+            total += sc.pence_per_day
         day = day + timedelta(days=1)
     return round(total, 4)
+
+
+def standing_charge_per_day(charges: list[StandingCharge], when: datetime, tz: ZoneInfo = LONDON) -> float | None:
+    """The full daily standing charge in force on the local day containing ``when``."""
+    day = to_utc(when).astimezone(tz).date()
+    sc = _standing_charge_at(charges, datetime.combine(day, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc))
+    return sc.pence_per_day if sc is not None else None
 
 
 def _standing_charge_at(charges: list[StandingCharge], when: datetime) -> StandingCharge | None:

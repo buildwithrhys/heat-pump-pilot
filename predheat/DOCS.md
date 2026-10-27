@@ -16,6 +16,8 @@ The first start discovers your entities and backfills a week of history, which t
 
 **Energy costs.** Costs by day for the last 7 to 90 days, priced at the tariff rate in force in each half hour, with COP and cost per kWh of heat. The flow diagram covers the chosen period.
 
+**Standing charge.** The electricity standing charge is a fixed amount per day, so PredHeat never pro-rates it and never puts it in a heating or hot water figure: no heating choice can change it. Where a whole-house cost for a period is shown (whole home import on Energy costs), it appears once as "Standing charge (fixed, per day)" at the full daily rate from the Octopus integration, times the number of days. The "same heat on gas" comparison leaves it out of both sides, because you pay it either way. If you enter a gas standing charge on the Settings tab, it is added to the gas side for each day compared.
+
 **Forecast.** The next 24 hours of advice with a reason for each line, and the inputs behind it: prices by certainty (guaranteed off-peak, confirmed and planned Intelligent Octopus dispatches, peak), the weather forecast and the solar forecast.
 
 **Tariffs.** Your own consumption replayed on Intelligent Octopus Go, Go, Cosy, Flexible and, with published rates fetched, Agile, ranked by cost next to what you actually paid. Add an EV or a battery as a what-if, and see a typical year's cost from your own usage and your area's climate. Add or correct tariffs by placing a `tariffs.yaml` in the add-on's data directory (`/addon_configs/<slug>/` or the `/data` folder inside the add-on).

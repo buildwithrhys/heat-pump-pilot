@@ -1,5 +1,5 @@
 name: PredHeat
-version: "0.6.4"
+version: "0.7.0"
 slug: predheat
 description: Self-learning heat pump and home energy optimiser.
 url: https://github.com/buildwithrhys/predheat

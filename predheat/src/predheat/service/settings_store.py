@@ -47,6 +47,8 @@ FIELDS: dict[str, dict[str, Any]] = {
                              "label": "Maximum setpoint offset", "help": "How far PredHeat may move your setpoint either way when control is on. Max savings uses one and a half times this, capped at 2 °C."},
     "design_outdoor_c": {"type": "number", "default": None, "min": -10.0, "max": 5.0, "step": 0.5, "unit": "°C", "optional": True, "group": "advanced",
                          "label": "Design outdoor temperature", "help": "The outdoor temperature heat loss is quoted at, as in a survey. Leave empty to use the regional value PredHeat picks from your home location."},
+    "gas_standing_charge_p_per_day": {"type": "number", "default": None, "min": 0.0, "max": 200.0, "step": 0.01, "unit": "p/day", "optional": True, "group": "comparisons",
+                                      "label": "Gas standing charge", "help": "Optional. The daily standing charge you would pay for a gas supply. When set, the \"same heat on gas\" comparison adds it to the gas side for each day compared, because a household heating with gas pays it on top of the gas used. Your electricity standing charge is left out of both sides, because you pay it either way."},
     "survey_heat_loss_kw": {"type": "number", "default": None, "min": 0.5, "max": 40.0, "step": 0.1, "unit": "kW", "optional": True, "group": "comparisons",
                             "label": "Surveyed heat loss", "help": "From your installer's heat loss survey, if you have one. Used as a starting point for the learned figure and shown beside it."},
     "survey_outdoor_c": {"type": "number", "default": None, "min": -10.0, "max": 5.0, "step": 0.5, "unit": "°C", "optional": True, "group": "comparisons",
@@ -61,7 +63,7 @@ FIELDS: dict[str, dict[str, Any]] = {
                             "solar you would otherwise export, the battery, or the grid. Read only; PredHeat never changes anything in Predbat. Has no effect without Predbat."},
 }
 OPTION_KEYS = ("control_enabled", "control_climate_entity", "control_dhw_entity", "trial_mode", "operating_mode", "control_max_offset_c",
-               "gas_price_p_per_kwh", "boiler_efficiency", "survey_heat_loss_kw", "survey_outdoor_c", "heat_pump_rated_kw",
+               "gas_price_p_per_kwh", "gas_standing_charge_p_per_day", "boiler_efficiency", "survey_heat_loss_kw", "survey_outdoor_c", "heat_pump_rated_kw",
                "design_outdoor_c", "use_predbat", "publish_for_predbat")
 # keys that older releases held in the Supervisor options file
 MIGRATED_FROM_OPTIONS = ("operating_mode", "gas_price_p_per_kwh", "boiler_efficiency", "control_max_offset_c",
@@ -164,6 +166,7 @@ class SettingsStore:
         settings.operating_mode = OperatingMode(self.values["operating_mode"])
         settings.gas_price_p_per_kwh = float(self.values["gas_price_p_per_kwh"])
         settings.boiler_efficiency = float(self.values["boiler_efficiency"])
+        settings.gas_standing_charge_p_per_day = self.values.get("gas_standing_charge_p_per_day")
         settings.control_max_offset_c = float(self.values["control_max_offset_c"])
         settings.design_outdoor_c = self.values.get("design_outdoor_c")
         settings.survey_heat_loss_kw = self.values.get("survey_heat_loss_kw")

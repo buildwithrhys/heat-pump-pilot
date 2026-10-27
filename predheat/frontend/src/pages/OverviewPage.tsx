@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, goToTab, num, pounds, type Overview, type Reading } from "../api";
+import { api, gasStandingLine, goToTab, num, pounds, type Overview, type Reading } from "../api";
 import { PlanList, when } from "./plan";
 import { EnergyFlow } from "./flow";
 import { Term, tip } from "../glossary";
@@ -82,15 +82,10 @@ export default function OverviewPage() {
             <div className="big">{t.space_heating.pence_per_kwh_heat != null ? `${t.space_heating.pence_per_kwh_heat.toFixed(1)}p` : "–"}</div>
             <div className="sub">per kWh of heat into the house today, space heating</div>
           </div>
-          <div className="card">
-            <h3>Standing charge<Term k="standing_charge" /></h3>
-            <div className="big">{pounds(t.standing_charge_pence)}</div>
-            <div className="sub">today's fixed daily charge, whole property</div>
-          </div>
           <div className={`card ${t.gas_equivalent.saving_pence >= 0 ? "info" : "warn"}`}>
             <h3>Same heat on gas<Term k="gas_comparison" /></h3>
             <div className="big">{pounds(t.gas_equivalent.cost_pence)}</div>
-            <div className="sub">{t.gas_equivalent.saving_pence >= 0 ? `heat pump ${pounds(t.gas_equivalent.saving_pence)} cheaper` : `heat pump ${pounds(-t.gas_equivalent.saving_pence)} dearer`} · modelled at {t.gas_equivalent.price_p_per_kwh}p, {Math.round(t.gas_equivalent.boiler_efficiency * 100)}% boiler</div>
+            <div className="sub">{t.gas_equivalent.saving_pence >= 0 ? `heat pump ${pounds(t.gas_equivalent.saving_pence)} cheaper` : `heat pump ${pounds(-t.gas_equivalent.saving_pence)} dearer`} · modelled at {t.gas_equivalent.price_p_per_kwh}p, {Math.round(t.gas_equivalent.boiler_efficiency * 100)}% boiler, {gasStandingLine(t.gas_equivalent)}</div>
           </div>
         </div>
         {!t.reconciliation.reconciled && <p className="err" style={{ fontSize: 12 }}>Category totals do not reconcile (worst {t.reconciliation.worst_difference_kwh} kWh).</p>}

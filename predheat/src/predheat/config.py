@@ -76,6 +76,7 @@ class Settings(BaseSettings):
 
     # Gas comparison (modelled counterfactual, labelled as such)
     gas_price_p_per_kwh: float = 6.24
+    gas_standing_charge_p_per_day: float | None = None  # optional; added to the gas side of the comparison per day
     boiler_efficiency: float = 0.85
 
     # Simulation
