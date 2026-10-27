@@ -256,3 +256,59 @@ def test_hot_water_is_shared_only_when_predheat_moves_the_cylinder_reheat(tmp_pa
     assert feed["includes_hot_water"] and sum(x["hot_water_kwh"] for x in feed["slots"]) > 0
     for x in feed["slots"]:
         assert x["extra_kwh"] == round(max(0.0, x["planned_kwh"] - x["usual_kwh"]), 3)
+
+
+# ---------------------------------------------------------------- a real install's shape, and stale dashboard pages
+
+
+def _raw(entity_id, state, attributes=None, updated="2026-10-27T15:55:02.123456+00:00"):
+    return {"entity_id": entity_id, "state": state, "attributes": attributes or {}, "last_changed": updated, "last_updated": updated}
+
+
+def test_detects_predbat_as_home_assistant_reports_it():
+    """Shaped like a real install: Predbat's own Predheat switch off, a Hypervolt sensor with predbat in its name,
+    plan entities with Predbat's timestamp keys, and over a hundred other predbat.* entities."""
+    from predheat.integrations.homeassistant.client import _parse_state
+
+    res = {"2026-10-27T16:00:00+0000": 0.0, "2026-10-27T16:05:00+0000": 0.4}
+    raws = [
+        _raw("predbat.grid_power_best", "0.0", {"results": res}),
+        _raw("predbat.battery_power_best", "3.526", {"results": res}),
+        _raw("predbat.soc_kw_best", "0.6", {"results": res, "value_per_kwh_now": 8.1, "soc_max": 9.5}, updated="2026-10-27T15:58:00+00:00"),
+        _raw("predbat.rates", "24.5", {"results": res}),
+        _raw("switch.predbat_predheat_enable", "off"),
+        _raw("sensor.predbat_hypervolt_home_3_pro_power", "0"),
+    ] + [_raw(f"predbat.other_{i}", "1") for i in range(130)]
+    states = {r["entity_id"]: _parse_state(r) for r in raws}
+    plan = read_plan(states)
+    assert plan is not None and plan.prefix == "predbat"
+    assert plan.updated_at == datetime(2026, 10, 27, 15, 58, tzinfo=UTC)  # the freshest plan entity
+    assert plan.fresh(datetime(2026, 10, 27, 16, 10, tzinfo=UTC))
+
+
+def test_system_health_always_reports_predbat(tmp_path):
+    settings, p = _platform(tmp_path)
+    s = p.system_health([])
+    assert s["predbat"]["installed"] is False and "not found" in s["predbat"]["reason"]
+    p.telemetry.live_states = _evening_battery(p.clock.now())
+    p._refresh_predbat()
+    assert p.system_health([])["predbat"]["installed"] is True
+
+
+def test_dashboard_page_is_not_cached_and_api_names_the_current_build(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from predheat.api.app import create_app
+
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text('<script type="module" src="./assets/index-AbC123_x.js"></script>')
+    (dist / "assets" / "index-AbC123_x.js").write_text("console.log(1)")
+    settings = Settings(data_mode=DataMode.SIMULATED, database_url=f"sqlite:///{tmp_path / 'd.sqlite'}", sim_days=2, data_dir=tmp_path, frontend_dir=dist)
+    p = build_platform(settings)
+    asyncio.run(p.bootstrap(0))
+    c = TestClient(create_app(settings, p, poll=False))
+    assert c.get("/").headers["cache-control"] == "no-cache"
+    assert "immutable" in c.get("/assets/index-AbC123_x.js").headers["cache-control"]
+    h = c.get("/api/health").headers
+    assert h["x-predheat-bundle"] == "index-AbC123_x.js" and h["x-predheat-version"]

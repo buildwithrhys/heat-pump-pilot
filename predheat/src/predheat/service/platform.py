@@ -1840,7 +1840,12 @@ class Platform:
                       "building_models": s.query(m.BuildingModelVersion).filter_by(property_id=self.property_id).count(),
                       "heat_pump_models": s.query(m.HeatPumpModelVersion).filter_by(property_id=self.property_id).count(),
                       "control_actions": s.query(m.ControlExecutionLog).filter_by(property_id=self.property_id).count()}
-            feed = self.predbat_feed(s, now) if self.predbat is not None else None
+            try:
+                feed = self.predbat_feed(s, now) if self.predbat is not None else None
+            except Exception as exc:  # noqa: BLE001 - never let the Predbat card take the whole page down
+                feed = {"entity_id": self.FEED_ENTITY, "attribute": self.FEED_ATTRIBUTE, "apps_yaml": f"load_forecast:\n  - {self.FEED_ENTITY}${self.FEED_ATTRIBUTE}",
+                        "enabled": bool(getattr(self.settings, "publish_for_predbat", True)), "status": "waiting", "extra_kwh": 0.0, "planned_kwh": 0.0,
+                        "reason": f"Could not work out the plan to share: {exc}"}
         return {"generated_at": now.isoformat(), "data_mode": self.settings.data_mode.value, "operating_mode": self.settings.operating_mode.value,
                 "control_enabled": self.settings.control_enabled,
                 "providers": [{"name": h.provider, "ok": h.ok, "last_success_at": h.last_success_at.isoformat() if h.last_success_at else None, "last_error": h.last_error, "details": h.details} for h in provider_health],

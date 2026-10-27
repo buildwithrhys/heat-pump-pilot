@@ -127,8 +127,10 @@ def read_plan(states: dict[str, Any]) -> PredbatPlan | None:
         except (TypeError, ValueError):
             return None
 
-    grid = states[ids["grid_power_best"]]
-    updated = grid.last_updated or grid.last_changed
+    # freshest of the plan entities: any of them changing means Predbat has just run
+    stamps = [st.last_updated or st.last_changed for st in (states.get(ids.get(k, "")) for k in _SERIES) if st is not None]
+    stamps = [t for t in stamps if t is not None]
+    updated = max(stamps) if stamps else None
     return PredbatPlan(prefix=ids["grid_power_best"].rsplit(".", 1)[0], updated_at=updated, grid_kw=series("grid_power_best"),
                        battery_kw=series("battery_power_best"), soc_kwh=series("soc_kw_best"), import_p=series("rates"),
                        export_p=series("rates_export"), battery_value_p=num(attrs.get("value_per_kwh_now")), soc_max_kwh=num(attrs.get("soc_max")),

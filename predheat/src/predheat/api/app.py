@@ -369,6 +369,25 @@ def _mount_dashboard(app: FastAPI, settings: Settings) -> None:
     if root is None or not (root / "index.html").is_file():
         return
     root = root.resolve()
+    import re
+
+    # The script the current index.html loads. Every API response names it, so a page left open
+    # across an update (Home Assistant keeps the panel loaded) can tell it is out of date.
+    found = re.search(r"assets/(index-[A-Za-z0-9_-]+\.js)", (root / "index.html").read_text())
+    bundle = found.group(1) if found else ""
+
+    @app.middleware("http")
+    async def freshness(request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if "/api/" in path or path.startswith("api/"):
+            response.headers["X-PredHeat-Bundle"] = bundle
+            response.headers["X-PredHeat-Version"] = __version__
+        elif "/assets/" in path:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"  # names change with every build
+        else:
+            response.headers["Cache-Control"] = "no-cache"  # index.html: always check for a newer build
+        return response
 
     @app.get("/{path:path}", include_in_schema=False)
     async def dashboard(path: str):

@@ -8,14 +8,26 @@ function url(path: string): string {
   return new URL(path.replace(/^\//, ""), document.baseURI).toString();
 }
 
+// The script file this page is running. The server names the current one on every API response;
+// if they differ, PredHeat was updated while this page stayed open, and App offers a reload.
+const OWN_BUNDLE = (() => { try { return new URL(import.meta.url).pathname.split("/").pop() ?? ""; } catch { return ""; } })();
+function checkFresh(r: Response) {
+  const current = r.headers.get("X-PredHeat-Bundle");
+  if (current && OWN_BUNDLE.startsWith("index-") && current !== OWN_BUNDLE) {
+    window.dispatchEvent(new CustomEvent("predheat:stale", { detail: r.headers.get("X-PredHeat-Version") }));
+  }
+}
+
 async function get<T>(path: string): Promise<T> {
   const r = await fetch(url(path));
+  checkFresh(r);
   if (!r.ok) throw new Error(`${path}: ${r.status}`);
   return r.json() as Promise<T>;
 }
 
 async function send<T>(method: "PUT" | "POST", path: string, body?: unknown): Promise<T> {
   const r = await fetch(url(path), { method, headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  checkFresh(r);
   if (!r.ok) {
     let detail = `${r.status}`;
     try { detail = (await r.json()).detail ?? detail; } catch { /* ignore */ }

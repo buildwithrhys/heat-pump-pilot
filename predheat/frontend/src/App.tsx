@@ -15,6 +15,12 @@ export default function App() {
     try { return (localStorage.getItem("predheat.tab") as Tab) || "Overview"; } catch { return "Overview"; }
   });
   const [meta, setMeta] = useState<Pick<Overview, "data_mode" | "operating_mode" | "control_enabled"> | null>(null);
+  const [newVersion, setNewVersion] = useState<string | null>(null);
+  useEffect(() => {
+    const onStale = (e: Event) => setNewVersion((e as CustomEvent<string | null>).detail ?? "");
+    window.addEventListener("predheat:stale", onStale);
+    return () => window.removeEventListener("predheat:stale", onStale);
+  }, []);
   useEffect(() => {
     api.overview().then((o) => setMeta(o)).catch(() => setMeta(null));
     const onTab = (e: Event) => setTab((e as CustomEvent<string>).detail as Tab);
@@ -35,6 +41,12 @@ export default function App() {
           </span>
         )}
       </header>
+      {newVersion !== null && (
+        <p className="note warn" role="status">
+          PredHeat has been updated{newVersion ? ` to ${newVersion}` : ""} since this page was opened, so some of what you see may be missing or out of date.{" "}
+          <button type="button" className="linkish" onClick={() => window.location.reload()}>Reload to see the new version</button>
+        </p>
+      )}
       <nav className="tabs" aria-label="Sections">
         {TABS.map((t) => (
           <button key={t} className={t === tab ? "active" : ""} onClick={() => pick(t)}>{t}</button>

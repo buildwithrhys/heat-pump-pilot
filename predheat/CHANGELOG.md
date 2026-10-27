@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.2
+
+- **Fixed: a dashboard left open across an update kept showing the old version.** Home Assistant keeps the PredHeat panel loaded, and the page itself could be cached, so after updating to 0.5.0 the System health tab could still be the old page with no Predbat section. The page is now never cached, and it shows a notice with a reload link when PredHeat has been updated since it was opened.
+- Predbat's plan counts as fresh when any of its plan entities has just updated, not only the grid one.
+- The Predbat cards can no longer take the whole System health tab down if the shared plan cannot be worked out; the card says why instead.
+
 ## 0.6.1
 
 - The plan shared with Predbat now includes hot water when PredHeat moves the cylinder reheat (a hot water entity is chosen on the Settings tab), on the same basis as heating: only what is planned above what the same half hour used on average over the last 7 days.
