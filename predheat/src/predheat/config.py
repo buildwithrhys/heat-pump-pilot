@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     control_override_hours: float = 4.0  # back off this long after a manual change
     control_dhw_entity: str | None = None  # water_heater.* entity for hot water scheduling
     control_dhw_boost_c: float = 5.0  # how far the cylinder target is raised during a planned reheat
+    use_predbat: bool = True  # read Predbat's battery plan for the marginal cost of heating, when installed
     trial_mode: bool = False  # alternate baseline and optimised days to measure the saving
 
     database_url: str = "sqlite:///./data/predheat.sqlite"

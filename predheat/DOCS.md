@@ -32,6 +32,20 @@ Once learned, the headline is kilowatts at the design outdoor temperature for yo
 
 Efficiency is the observed average COP over the period, the heat delivered divided by the electricity used from the controller's own counters, shown separately for space heating and hot water with the outdoor range it covers. It can differ from the Vaillant app because the period, the split by end use and the absence of normalisation differ.
 
+## Predbat
+
+If Predbat is installed, PredHeat finds it on its own and reads its battery and solar plan each cycle. It changes nothing in Predbat.
+
+The plan tells PredHeat where one more kWh for the heat pump would come from in each half hour, and so what it would really cost:
+
+- **Solar you would otherwise export:** only the export payment you give up.
+- **The battery,** when Predbat's plan has it covering the house with room to spare: what Predbat values stored energy at, which is roughly what it cost to fill allowing for losses. PredHeat never assumes the battery can discharge faster than Predbat itself plans, or go below the lowest level Predbat plans to reach.
+- **The grid,** otherwise, at your tariff. The figure is never higher than the grid price.
+
+PredHeat plans the heating with these prices, so it no longer avoids heating at 5pm when the battery is covering the house cheaply. The Forecast tab shows the cost line over the price chart, and System health shows whether the plan is in use. The plan is used only while it is under 30 minutes old. Turn it off with "Use Predbat's battery plan" on the Settings tab.
+
+Not yet: telling Predbat what the heat pump will use. Predbat's load forecast is based on past days, so when PredHeat moves heating, Predbat's battery plan does not know until it has seen it happen.
+
 ## The heating curve check
 
 The heating curve on your Vaillant controller decides how hot the radiator water is for each outdoor temperature. Water hotter than the house needs costs money: the heat pump is roughly 2 to 3% less efficient for every degree of extra flow temperature. The check, on the Overview under Your house, works out what your house actually needs from your own data:

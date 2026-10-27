@@ -133,6 +133,7 @@ class HATelemetryProvider:
         now = datetime.now(tz=timezone.utc)
         try:
             states = {s.entity_id: s for s in await self.client.states()}
+            self.live_states = states  # every entity with attributes, as read this cycle (Predbat's plan lives here)
             self._last_ok = now
             self._last_error = None
         except Exception as exc:  # noqa: BLE001

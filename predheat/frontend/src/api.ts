@@ -369,11 +369,18 @@ export interface DailyRow {
 export interface Timeline {
   generated_at: string;
   tariff_code: string | null;
-  slots: { start: string; end: string; rate_p: number | null; price_class: string; assumed: boolean }[];
+  slots: { start: string; end: string; rate_p: number | null; price_class: string; assumed: boolean; heating_rate_p?: number; source?: "grid" | "battery" | "solar"; shares?: Record<string, number> }[];
   slot_summary: Record<string, number>;
   weather: { valid_at: string; temperature_c: number; cloud_cover_pct: number | null }[];
   solar: { period_start: string; pv_kw: number; pv10_kw: number | null; pv90_kw: number | null }[];
   optimisation: ShadowPlan;
+  predbat: PredbatStatus;
+}
+
+export interface PredbatStatus {
+  installed: boolean; enabled: boolean; in_use: boolean; reason: string;
+  prefix?: string; updated_at?: string | null; age_minutes?: number | null; plan_until?: string | null;
+  battery_value_p?: number | null; battery_size_kwh?: number | null; entities?: Record<string, string>;
 }
 
 export interface SystemHealth {
@@ -390,6 +397,7 @@ export interface SystemHealth {
   record_counts: Record<string, number>;
   forecast_accuracy: ForecastAccuracy;
   control: ControlStatus;
+  predbat?: PredbatStatus;
 }
 
 export interface CurveBand {

@@ -143,6 +143,26 @@ export default function SystemPage() {
         </table></div>
       </div>
 
+      {s.predbat && (
+        <div className="section">
+          <h2>Predbat<Term k="predbat" /></h2>
+          <div className="grid">
+            <div className={`card ${s.predbat.in_use ? "info" : ""}`}>
+              <h3>Battery plan</h3>
+              <div className="big" style={{ fontSize: "1.1rem" }}>{s.predbat.in_use ? "In use" : s.predbat.installed ? "Found, not in use" : "Not installed"}</div>
+              <div className="sub" title={s.predbat.entities ? `Reads ${Object.values(s.predbat.entities).join(", ")}. Read only.` : undefined}>{s.predbat.reason}</div>
+            </div>
+            {s.predbat.installed && s.predbat.battery_value_p != null && (
+              <div className="card">
+                <h3>Stored energy value<Term k="heating_rate" /></h3>
+                <div className="big">{s.predbat.battery_value_p.toFixed(1)}p</div>
+                <div className="sub">per kWh from your battery, Predbat's figure now{s.predbat.battery_size_kwh ? `, ${s.predbat.battery_size_kwh.toFixed(1)} kWh battery` : ""}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="section">
         <h2>Integrations discovered</h2>
         <div className="tablewrap"><table>

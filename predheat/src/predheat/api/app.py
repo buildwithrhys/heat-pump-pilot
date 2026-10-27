@@ -87,6 +87,13 @@ def create_app(settings: Settings | None = None, platform: Platform | None = Non
         p = plat()
         return p.system_health(await p.health())
 
+    @app.get("/api/predbat")
+    async def predbat():
+        """Whether Predbat's battery plan is in use, and the cost of extra heating per half hour it implies. Read only."""
+        p = plat()
+        tl = p.timeline(48)
+        return {**tl["predbat"], "slots": [x for x in tl["slots"] if "heating_rate_p" in x]}
+
     @app.get("/api/discovery")
     async def discovery():
         p = plat()

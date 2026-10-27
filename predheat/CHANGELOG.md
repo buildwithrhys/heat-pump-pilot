@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0
+
+- **Predbat.** If Predbat is installed, PredHeat now reads its battery and solar plan (read only; nothing in Predbat is changed) and works out what extra heating would really cost in each half hour. Solar you would otherwise export costs only the export payment you give up; the battery costs what Predbat values stored energy at; the rest is the grid price. The planner uses these prices, so it no longer treats 5pm as expensive when your battery is covering the house. The Forecast tab draws the cost line over the price chart, System health shows whether the plan is in use and why not, and "Use Predbat's battery plan" on the Settings tab turns it off. Without Predbat nothing changes.
+
 ## 0.4.0
 
 - **Heating curve check**, on the Overview under Your house. From the last 14 days of your own data PredHeat measures how much heat your radiators give out and, with your learned heat loss, works out the water temperature your house actually needs at each outdoor temperature. It shows that against what your controller asks for, suggests a heating curve (and, where it helps, a minimum flow temperature and outdoor cut-off), and estimates the saving. Rooms that run cold in a band of weather override any suggestion to go lower.

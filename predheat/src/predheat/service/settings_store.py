@@ -53,10 +53,13 @@ FIELDS: dict[str, dict[str, Any]] = {
                          "label": "Survey outdoor temperature", "help": "The outdoor temperature the surveyed figure was quoted at. Leave empty to assume the design temperature above."},
     "heat_pump_rated_kw": {"type": "number", "default": None, "min": 1.0, "max": 50.0, "step": 0.5, "unit": "kW", "optional": True, "group": "comparisons",
                            "label": "Heat pump rated output", "help": "Nameplate heating output, for example 7 for an aroTHERM plus 7 kW. Used to show the margin over your heat loss."},
+    "use_predbat": {"type": "bool", "default": True, "group": "advanced", "label": "Use Predbat's battery plan",
+                    "help": "When Predbat is installed, PredHeat reads its battery and solar plan to work out what extra heating would really cost in each half hour: "
+                            "solar you would otherwise export, the battery, or the grid. Read only; PredHeat never changes anything in Predbat. Has no effect without Predbat."},
 }
 OPTION_KEYS = ("control_enabled", "control_climate_entity", "control_dhw_entity", "trial_mode", "operating_mode", "control_max_offset_c",
                "gas_price_p_per_kwh", "boiler_efficiency", "survey_heat_loss_kw", "survey_outdoor_c", "heat_pump_rated_kw",
-               "design_outdoor_c")
+               "design_outdoor_c", "use_predbat")
 # keys that older releases held in the Supervisor options file
 MIGRATED_FROM_OPTIONS = ("operating_mode", "gas_price_p_per_kwh", "boiler_efficiency", "control_max_offset_c",
                          "control_enabled", "control_climate_entity")
@@ -163,6 +166,7 @@ class SettingsStore:
         settings.survey_heat_loss_kw = self.values.get("survey_heat_loss_kw")
         settings.survey_outdoor_c = self.values.get("survey_outdoor_c")
         settings.heat_pump_rated_kw = self.values.get("heat_pump_rated_kw")
+        settings.use_predbat = bool(self.values.get("use_predbat", True))
 
     def update(self, changes: dict[str, Any], settings: Settings) -> dict[str, Any]:
         new = dict(self.values)

@@ -47,6 +47,7 @@ class Platform:
     openmeteo: Any = None  # irradiance provider when a location is known
     octopus_api: Any = None  # direct rates for the tariff comparison
     seen_at: dict[str, datetime] = field(default_factory=dict)  # signal -> when its entity was last seen live
+    predbat: Any = None  # Predbat's published plan, read each cycle when Predbat is installed (read only)
     _memo: dict[tuple, Any] = field(default_factory=dict)
 
     def _cached(self, key: tuple, compute):
@@ -179,6 +180,12 @@ class Platform:
                 result["measurements_error"] = str(exc)
                 repo.log_quality_event(s, self.property_id, "error", self.telemetry.name, str(exc))
             try:
+                result["predbat"] = self._refresh_predbat()
+            except Exception as exc:  # noqa: BLE001
+                self.predbat = None
+                result["predbat_error"] = str(exc)
+                repo.log_quality_event(s, self.property_id, "warning", "predbat", f"could not read Predbat's plan: {exc}")
+            try:
                 snap = await self.tariff.snapshot()
                 result["rates"] = repo.upsert_rates(s, snap.rates, snap.observed_at)
                 repo.upsert_standing_charges(s, snap.standing_charges, snap.observed_at)
@@ -249,6 +256,43 @@ class Platform:
                 repo.log_quality_event(s, self.property_id, "error", "heat_pump_model", str(exc))
         self.last_poll.update(result)
         return result
+
+    # ------------------------------------------------------------------ Predbat (read only)
+    def _refresh_predbat(self) -> str:
+        from ..integrations.predbat import read_plan
+
+        states = getattr(self.telemetry, "live_states", None)
+        if states is None:
+            self.predbat = None
+            return "not read"
+        self.predbat = read_plan(states)
+        return "found" if self.predbat else "not installed"
+
+    def predbat_status(self, now: datetime | None = None) -> dict[str, Any]:
+        """Whether Predbat's plan is in use, and if not, why not, in words."""
+        now = now or self.clock.now()
+        p = self.predbat
+        enabled = bool(getattr(self.settings, "use_predbat", True))
+        if p is None:
+            return {"installed": False, "enabled": enabled, "in_use": False,
+                    "reason": "Predbat was not found in Home Assistant. PredHeat prices heating at your grid tariff alone."}
+        age = (now - p.updated_at).total_seconds() / 60.0 if p.updated_at else None
+        base = {"installed": True, "enabled": enabled, "prefix": p.prefix, "entities": p.entities,
+                "updated_at": p.updated_at.isoformat() if p.updated_at else None, "age_minutes": round(age, 0) if age is not None else None,
+                "plan_until": p.horizon_end.isoformat() if p.horizon_end else None, "battery_value_p": p.battery_value_p, "battery_size_kwh": p.soc_max_kwh}
+        if not enabled:
+            return {**base, "in_use": False, "reason": "Predbat is installed, but \"Use Predbat's battery plan\" is off on the Settings tab."}
+        if not p.fresh(now):
+            return {**base, "in_use": False,
+                    "reason": f"Predbat's plan was last updated {round(age or 0)} minutes ago; PredHeat uses it only when it is under 30 minutes old, and uses your grid tariff alone until then."}
+        return {**base, "in_use": True, "reason": "Using Predbat's battery and solar plan to work out what extra heating would cost in each half hour."}
+
+    def _predbat_prices(self, slots: list[SlotPrice], now: datetime, extra_kw: float) -> tuple[list[SlotPrice], list[dict[str, Any]]]:
+        if not self.predbat_status(now)["in_use"]:
+            return slots, []
+        from ..integrations.predbat import apply_to_slots
+
+        return apply_to_slots(self.predbat, slots, extra_kw)
 
     AUDITED = (Signal.GRID_IMPORT_KWH, Signal.HP_ELEC_HEATING_KWH, Signal.HP_HEAT_HEATING_KWH, Signal.HP_ENV_HEATING_KWH,
                Signal.HP_ELEC_DHW_KWH, Signal.HP_HEAT_DHW_KWH, Signal.HP_ENV_DHW_KWH)
@@ -1158,6 +1202,9 @@ class Platform:
             return value(Signal.OUTDOOR_TEMPERATURE) if value(Signal.OUTDOOR_TEMPERATURE) is not None else best[1]
 
         cop_model = COPModel(hp["model"]["a"], hp["model"]["b"])
+        # what one more half hour of heating draws, for judging whether the battery or export could cover it
+        extra_kw = min(5.0, max(0.3, (hp["capacity_kw"] or 4.5) / max(cop_model.cop_at(7.0), 1.0)))
+        priced, via_predbat = self._predbat_prices(priced, now, extra_kw)
         inp = MPCInputs(starts=[sp.start for sp in priced], rate_p=[sp.rate_p_per_kwh for sp in priced],
                         t_out=[t_out_at(sp.start) for sp in priced], ua_w_per_k=est["heat_loss_w_per_k"],
                         capacity_kwh_per_k=est["capacity_kwh_per_k"] or 5.0, internal_gain_kw=est["internal_gain_kw"] or 0.0,
@@ -1166,6 +1213,22 @@ class Platform:
         notes = [f"Building model confidence {est['confidence']:.0%} from {est['samples']} half-hours; heat pump model {hp['status']} "
                  f"({hp['samples']} hours, confidence {hp['confidence']:.0%})."]
         plan = build_mpc_plan(inp, now, model_notes=notes)
+        if via_predbat:
+            by_start = {d["start"]: d for d in via_predbat}
+            for p in plan.get("predicted", []):
+                d = by_start.get(p["start"] if isinstance(p["start"], str) else p["start"].isoformat())
+                if d:
+                    p["grid_rate_p"], p["source"] = d["grid_rate_p"], d["source"]
+            n = {k: sum(1 for d in via_predbat if d["source"] == k and d["rate_p"] < d["grid_rate_p"] - 0.05) for k in ("battery", "solar")}
+            saved = [d["grid_rate_p"] - d["rate_p"] for d in via_predbat if d["rate_p"] < d["grid_rate_p"] - 0.05]
+            plan["energy_source"] = {"from": "predbat", "half_hours": len(via_predbat), "battery_half_hours": n["battery"], "solar_half_hours": n["solar"],
+                                     "extra_kw": round(extra_kw, 2), "battery_value_p": self.predbat.battery_value_p}
+            line = (f"Prices use Predbat's battery and solar plan: in {n['battery']} of the next {len(via_predbat)} half-hours extra heating would mostly come from the battery, "
+                    f"and in {n['solar']} from solar you would otherwise export, about {sum(saved) / len(saved):.1f}p per kWh below the grid price on average."
+                    if saved else f"Prices checked against Predbat's battery and solar plan: over the next {len(via_predbat)} half-hours extra heating would come from the grid, so the grid price stands.")
+            plan.setdefault("assumptions", []).insert(0, line)
+        elif self.predbat is not None:
+            plan.setdefault("assumptions", []).append(self.predbat_status(now)["reason"])
         plan["model"] = {"building": est["status"], "heat_pump": hp["status"], "heat_loss_w_per_k": est["heat_loss_w_per_k"],
                          "cop_at_7": round(cop_model.cop_at(7.0), 2), "capacity_kw": hp["capacity_kw"], "setpoint_c": setpoint, "tolerance_c": tolerance}
         return plan
@@ -1638,12 +1701,20 @@ class Platform:
         with session_scope(self.settings.database_url) as s:
             tariff_code = self.last_poll.get("tariff_code")
             slots = []
-            for sp in self._price_slots(s, start, end):
-                slots.append({"start": sp.start.isoformat(), "end": sp.end.isoformat(), "rate_p": None if sp.rate_p_per_kwh != sp.rate_p_per_kwh else sp.rate_p_per_kwh,
-                              "price_class": sp.price_class.value, "assumed": sp.assumed})
+            raw = self._price_slots(s, start, end)
+            plan = self.shadow_plan(s, now)
+            extra_kw = (plan.get("energy_source") or {}).get("extra_kw", 1.5)
+            _adj, via = self._predbat_prices([sp for sp in raw if sp.rate_p_per_kwh == sp.rate_p_per_kwh], now, extra_kw)
+            via_by = {d["start"]: d for d in via}
+            for sp in raw:
+                row = {"start": sp.start.isoformat(), "end": sp.end.isoformat(), "rate_p": None if sp.rate_p_per_kwh != sp.rate_p_per_kwh else sp.rate_p_per_kwh,
+                       "price_class": sp.price_class.value, "assumed": sp.assumed}
+                d = via_by.get(row["start"])
+                if d:
+                    row["heating_rate_p"], row["source"], row["shares"] = d["rate_p"], d["source"], d["shares"]
+                slots.append(row)
             weather = [{"valid_at": as_utc(w.valid_at).isoformat(), "temperature_c": w.temperature_c, "cloud_cover_pct": w.cloud_cover_pct, "wind_speed_ms": w.wind_speed_ms}
                        for w in self._latest_weather(s)]
-            plan = self.shadow_plan(s, now)
             latest_solar = s.query(m.SolarForecast.issued_at).filter_by(property_id=self.property_id).order_by(m.SolarForecast.issued_at.desc()).first()
             solar = []
             if latest_solar:
@@ -1651,7 +1722,7 @@ class Platform:
                     solar.append({"period_start": as_utc(p.period_start).isoformat(), "pv_kw": p.pv_estimate_kw, "pv10_kw": p.pv_estimate10_kw, "pv90_kw": p.pv_estimate90_kw})
             summary = {c.value: sum(1 for x in slots if x["price_class"] == c.value) for c in PriceClass}
         return {"generated_at": now.isoformat(), "horizon_hours": hours, "tariff_code": tariff_code, "slots": slots,
-                "slot_summary": summary, "weather": weather, "solar": solar, "optimisation": plan}
+                "slot_summary": summary, "weather": weather, "solar": solar, "optimisation": plan, "predbat": self.predbat_status(now)}
 
     def system_health(self, provider_health: list[ProviderHealth]) -> dict[str, Any]:
         now = self.clock.now()
@@ -1681,7 +1752,7 @@ class Platform:
                 "providers": [{"name": h.provider, "ok": h.ok, "last_success_at": h.last_success_at.isoformat() if h.last_success_at else None, "last_error": h.last_error, "details": h.details} for h in provider_health],
                 "integrations": self.capability_report.integrations if self.capability_report else [],
                 "warnings": self.capability_report.warnings if self.capability_report else [],
-                "signals": signals, "missing_for_thermal_model": [x.value for x in (self.capability_report.missing_for_thermal_model() if self.capability_report else [])],
+                "signals": signals, "predbat": self.predbat_status(now), "missing_for_thermal_model": [x.value for x in (self.capability_report.missing_for_thermal_model() if self.capability_report else [])],
                 "recent_events": events, "record_counts": counts, "last_poll": self.last_poll,
                 "forecast_accuracy": self.forecast_accuracy(s, now=now), "control": self.control_status()}
 
