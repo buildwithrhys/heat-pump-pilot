@@ -42,9 +42,11 @@ export interface Reading {
   ts: string;
   confirmed_at?: string;
   age_minutes?: number;
-  stale_after_minutes?: number;
+  stale_after_minutes?: number | null;
   quality: string;
   stale: boolean;
+  stale_reason?: string | null;
+  freshness?: "telemetry" | "counter" | "setting";
 }
 
 export interface Balance {
@@ -403,7 +405,7 @@ export interface SystemHealth {
   providers: { name: string; ok: boolean; last_success_at: string | null; last_error: string | null }[];
   integrations: { platform: string; present: boolean; entities: number; live_entities: number; config_state: string | null }[];
   warnings: string[];
-  signals: { signal: string; status: string; quality: string; source: string | null; confidence: number; last_value: number | null; last_text: string | null; age_minutes: number | null; stale: boolean; notes: string }[];
+  signals: { signal: string; status: string; quality: string; source: string | null; confidence: number; last_value: number | null; last_text: string | null; age_minutes: number | null; stale: boolean; notes: string; stale_reason?: string | null; freshness?: "telemetry" | "counter" | "setting" }[];
   missing_for_thermal_model: string[];
   recent_events: { ts: string; severity: string; source: string; message: string }[];
   record_counts: Record<string, number>;

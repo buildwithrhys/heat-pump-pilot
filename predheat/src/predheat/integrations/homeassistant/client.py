@@ -25,6 +25,7 @@ class HAState:
     attributes: dict[str, Any] = field(default_factory=dict)
     last_changed: datetime | None = None
     last_updated: datetime | None = None
+    last_reported: datetime | None = None  # moves on every write, even an unchanged one (Home Assistant 2024.3 and later)
     platform: str | None = None  # from entity registry when available
     disabled: bool = False
 
@@ -188,4 +189,5 @@ def _parse_state(raw: dict[str, Any]) -> HAState:
         attributes=raw.get("attributes", {}) or {},
         last_changed=_dt(raw.get("last_changed")),
         last_updated=_dt(raw.get("last_updated")),
+        last_reported=_dt(raw.get("last_reported")),
     )

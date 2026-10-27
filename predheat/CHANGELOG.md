@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.3
+
+- **Fixed: settings and on/off flags shown as "not updating" when nothing was wrong.** Home Assistant only records a new time when a value changes, so a heating curve, minimum flow, cut-off, hot water mode, boost switch, energy manager state, off-peak or dispatching flag that held for hours looked stuck. Readings now fall into two kinds. Temperatures, pressure and power are flagged after 2 hours without a new reading, counting Home Assistant's "last reported" time, which moves even when the value is unchanged. Settings, modes, flags, prices and energy counters are flagged only if the entity becomes unavailable or its whole integration stops sending. Each flag says why in its tooltip. The Overview tiles and System health now use the same check (System health had missed the 0.2.3 fix).
+- Steady values are no longer mistaken for gaps in the data. When Home Assistant confirms an unchanged temperature or setting, PredHeat stores a confirmation reading at most every 30 minutes, so the house model and the heating curve check see a steady indoor temperature as data rather than a hole. Energy counters are not touched.
+
 ## 0.6.2
 
 - **Fixed: a dashboard left open across an update kept showing the old version.** Home Assistant keeps the PredHeat panel loaded, and the page itself could be cached, so after updating to 0.5.0 the System health tab could still be the old page with no Predbat section. The page is now never cached, and it shows a notice with a reload link when PredHeat has been updated since it was opened.

@@ -57,7 +57,7 @@ function MappingRow({ x, map, editable, onChange }: { x: SystemHealth["signals"]
   return (
     <tr>
       <td title={map?.description ?? ""}>{x.signal}</td>
-      <td><span className={`tag ${x.status === "available" ? (x.stale ? "bad" : "measured") : x.status === "degraded" ? "estimated" : ""}`} title={x.stale ? GLOSSARY.stale : STATUS_LABEL[x.status]?.[1]}>{x.stale ? `not updating: ${x.age_minutes} min` : (STATUS_LABEL[x.status]?.[0] ?? x.status)}</span>{map?.overridden ? <span className="tag" title="You chose this entity on this page">chosen by you</span> : null}</td>
+      <td><span className={`tag ${x.status === "available" ? (x.stale ? "bad" : "measured") : x.status === "degraded" ? "estimated" : ""}`} title={x.stale ? (x.stale_reason ?? GLOSSARY.stale) : x.status === "available" ? `${STATUS_LABEL[x.status]?.[1]} ${x.freshness === "telemetry" ? GLOSSARY.fresh_telemetry : GLOSSARY.fresh_setting}` : STATUS_LABEL[x.status]?.[1]}>{x.stale ? (x.freshness === "telemetry" && x.age_minutes != null ? `not updating: ${x.age_minutes >= 90 ? `${(x.age_minutes / 60).toFixed(1)} h` : `${x.age_minutes} min`}` : "not updating") : (STATUS_LABEL[x.status]?.[0] ?? x.status)}</span>{map?.overridden ? <span className="tag" title="You chose this entity on this page">chosen by you</span> : null}</td>
       <td className="muted" title={QUALITY_LABEL[x.quality]?.[1]}>{QUALITY_LABEL[x.quality]?.[0] ?? x.quality}</td>
       <td className="mono muted" title={x.source ?? ""}>
         {editing ? (

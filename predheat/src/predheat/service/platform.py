@@ -1502,25 +1502,53 @@ class Platform:
                 out.append(ProviderHealth(getattr(p, "name", "?"), False, None, str(exc)))
         return out
 
+    TELEMETRY_STALE_AFTER = timedelta(hours=2)
+
+    def _freshness(self, sig: Signal, r, now: datetime, entity_id: str | None) -> dict[str, Any]:
+        """Is this reading current? Telemetry by how long since Home Assistant last confirmed it
+        (last_updated or last_reported); settings, modes, flags, rates and counters only by whether
+        the entity is available and its integration is still sending anything at all."""
+        from ..domain import freshness_class
+
+        cls = freshness_class(sig)
+        live = getattr(self.telemetry, "live_states", None)
+        st = live.get(entity_id) if live and entity_id else None
+        stamps = [as_utc(r.ts)] if r is not None else []
+        if st is not None:
+            stamps += [t for t in (st.last_updated, st.last_reported) if t is not None]
+        elif not live and self.seen_at.get(sig.value):
+            stamps.append(self.seen_at[sig.value])  # no Home Assistant states (simulator): PredHeat's own successful read
+        confirmed = max(stamps) if stamps else None
+        age = (now - confirmed) if confirmed else None
+        out = {"freshness": cls, "confirmed_at": confirmed.isoformat() if confirmed else None,
+               "age_minutes": round(age.total_seconds() / 60, 1) if age is not None else None, "stale": False, "stale_reason": None,
+               "stale_after_minutes": int(self.TELEMETRY_STALE_AFTER.total_seconds() // 60) if cls == "telemetry" else None}
+        if st is not None and not st.is_live:
+            out.update(stale=True, stale_reason=f"Home Assistant reports this entity as {st.state or 'empty'}.")
+        elif cls == "telemetry":
+            if age is not None and age > self.TELEMETRY_STALE_AFTER:
+                out.update(stale=True, stale_reason=f"No new reading for {age.total_seconds() / 3600:.1f} hours; readings like this normally arrive every few minutes.")
+        else:
+            reg = getattr(self.telemetry, "last_states", {}) or {}
+            platform = getattr(reg.get(entity_id or ""), "platform", None)
+            active = self.telemetry.integration_active(platform, now) if hasattr(self.telemetry, "integration_active") else None
+            if active is False:
+                out.update(stale=True, stale_reason=f"Its integration ({platform}) has sent nothing for over 2 hours, so this value may be out of date.")
+        return out
+
     def overview(self) -> dict[str, Any]:
         now = self.clock.now()
         with session_scope(self.settings.database_url) as s:
             latest = repo.latest_measurements(s, self.property_id)
 
-            stale_after = max(timedelta(seconds=2 * self.settings.ha_poll_seconds), timedelta(minutes=15))
-
-            mapped = {c.signal.value for c in (self.capability_report.capabilities if self.capability_report else []) if c.status != "unavailable"}
+            mapped = {c.signal.value: c.source_ref for c in (self.capability_report.capabilities if self.capability_report else []) if c.status != "unavailable"}
 
             def val(sig: Signal) -> dict | None:
                 r = latest.get(sig.value)
                 if not r or (self.capability_report and sig.value not in mapped):
                     return None
-                seen = self.seen_at.get(sig.value)
-                confirmed = max(as_utc(r.ts), seen) if seen else as_utc(r.ts)
-                age = now - confirmed
-                return {"value": r.value, "text": r.text, "ts": as_utc(r.ts).isoformat(), "confirmed_at": confirmed.isoformat(),
-                        "age_minutes": round(age.total_seconds() / 60, 1), "quality": r.quality, "stale": age > stale_after,
-                        "stale_after_minutes": int(stale_after.total_seconds() // 60)}
+                return {"value": r.value, "text": r.text, "ts": as_utc(r.ts).isoformat(), "quality": r.quality,
+                        **self._freshness(sig, r, now, mapped.get(sig.value))}
 
             today = now.astimezone(LONDON).date()
             costs = self._energy_costs(s, today, today + timedelta(days=1))
@@ -1824,11 +1852,11 @@ class Platform:
             signals = []
             for cap in (self.capability_report.capabilities if self.capability_report else []):
                 r = latest.get(cap.signal.value) if cap.status != "unavailable" else None  # no leftovers from an earlier mapping
-                age = (now - as_utc(r.ts)).total_seconds() / 60 if r else None
                 notes = cap.notes
+                fresh = self._freshness(cap.signal, r, now, cap.source_ref) if r is not None else {"age_minutes": None, "stale": False}
                 signals.append({"signal": cap.signal.value, "status": cap.status, "quality": cap.quality.value, "source": cap.source_ref,
                                 "confidence": cap.confidence, "last_value": (r.value if r else None), "last_text": (r.text if r else None),
-                                "age_minutes": round(age, 1) if age is not None else None, "stale": (age is not None and age > 120), "notes": notes})
+                                "notes": notes, **fresh})
             events = [{"ts": as_utc(e.ts).isoformat(), "severity": e.severity, "source": e.source, "message": e.message}
                       for e in s.query(m.DataQualityEvent).filter_by(property_id=self.property_id).order_by(m.DataQualityEvent.ts.desc()).limit(25).all()]
             counts = {"measurements": s.query(m.SensorMeasurement).filter_by(property_id=self.property_id).count(),

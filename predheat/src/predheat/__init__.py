@@ -6,4 +6,4 @@ never imports Home Assistant specifics. Integrations live under
 signals defined in ``predheat.domain``.
 """
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"

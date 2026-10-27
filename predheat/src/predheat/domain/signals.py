@@ -285,3 +285,24 @@ SIGNAL_CATALOGUE: dict[Signal, SignalSpec] = {
 def minimum_thermal_model_signals() -> list[Signal]:
     """The smallest set of signals needed before heat-loss learning can begin."""
     return [s for s, spec in SIGNAL_CATALOGUE.items() if spec.required_for_thermal_model]
+
+
+# How to judge whether a reading is current. Telemetry keeps changing while the integration is
+# alive, so its age matters. Settings, modes, on/off flags, rates and counters can legitimately
+# hold the same value for days; Home Assistant then leaves last_updated alone, so their age says
+# nothing about health. They count as current unless the entity is unavailable or its whole
+# integration has gone quiet.
+TELEMETRY_SIGNALS = frozenset({
+    Signal.INDOOR_TEMPERATURE, Signal.INDOOR_HUMIDITY, Signal.OUTDOOR_TEMPERATURE, Signal.FLOW_TEMPERATURE,
+    Signal.RETURN_TEMPERATURE, Signal.DHW_TANK_TEMPERATURE, Signal.SYSTEM_WATER_PRESSURE, Signal.WEATHER_TEMPERATURE,
+    Signal.WEATHER_HUMIDITY, Signal.HOME_LOAD_POWER, Signal.GRID_POWER,
+})
+
+
+def freshness_class(sig: Signal) -> str:
+    """``telemetry``, ``counter`` or ``setting`` (settings, modes, flags, rates: values that may hold for days)."""
+    if sig in TELEMETRY_SIGNALS:
+        return "telemetry"
+    if SIGNAL_CATALOGUE[sig].kind == SignalKind.CUMULATIVE:
+        return "counter"
+    return "setting"

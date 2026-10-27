@@ -10,14 +10,17 @@ const ago = (min: number | undefined) => (min == null ? "" : min < 1 ? "just now
 
 function Tile({ title, reading, unit = "", dp = 1, sub, term }: { title: string; reading: Reading | null | undefined; unit?: string; dp?: number; sub?: string; term?: string }) {
   const v = reading?.value;
-  const tipText = reading ? `Last read ${ago(reading.age_minutes)}; value last changed ${new Date(reading.ts).toLocaleString("en-GB", { hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" })}. Flagged stale after ${reading.stale_after_minutes ?? 15} minutes without a successful read.` : "No reading stored";
+  const tipText = !reading ? "No reading stored"
+    : reading.stale && reading.stale_reason ? reading.stale_reason
+    : reading.freshness === "telemetry" ? `Last confirmed by Home Assistant ${ago(reading.age_minutes)}. ${tip("fresh_telemetry")}`
+    : tip("fresh_setting");
   return (
     <div className="card" title={tipText}>
       <h3>{title}{term ? <Term k={term} /> : null}</h3>
       <div className="big">{reading?.text && v == null ? reading.text : num(v ?? null, dp, unit)}</div>
       <div className="sub">
-        {sub ?? (reading ? `read ${ago(reading.age_minutes)}` : "no data")}
-        {reading?.stale && <span className="tag bad" title={tipText}>stale: last read {ago(reading.age_minutes)}</span>}
+        {sub ?? (reading ? (reading.freshness === "telemetry" ? `read ${ago(reading.age_minutes)}` : "current") : "no data")}
+        {reading?.stale && <span className="tag bad" title={tipText}>{reading.freshness === "telemetry" ? `stale: last read ${ago(reading.age_minutes)}` : "may be out of date"}</span>}
       </div>
     </div>
   );

@@ -21,6 +21,7 @@ from ...domain import (
     RateInterval,
     SIGNAL_CATALOGUE,
     Signal,
+    freshness_class,
     SolarPoint,
     StandingCharge,
     TariffSnapshot,
@@ -140,6 +141,9 @@ class HATelemetryProvider:
             self._last_error = str(exc)
             raise
         out = []
+        confirmed = getattr(self, "_confirmed", None)
+        if confirmed is None:
+            confirmed = self._confirmed = {}
         for m in self.mapping:
             st = states.get(m.entity_id)
             if st is None:
@@ -147,7 +151,45 @@ class HATelemetryProvider:
             meas = measurement_from_state(m, st, now)
             if meas:
                 out.append(meas)
+                beat = self._confirmation(m, st, now, confirmed)
+                if beat is not None:
+                    out.append(beat)
         return out
+
+    CONFIRM_EVERY = timedelta(minutes=30)
+    QUIET_AFTER = timedelta(hours=2)
+
+    def _confirmation(self, m, st, now: datetime, confirmed: dict[str, datetime]) -> Measurement | None:
+        """A reading that repeats an unchanged value, so a steady temperature or a setting that holds
+        for days is not mistaken for a gap. Home Assistant stores nothing new while a value is
+        unchanged. Telemetry is confirmed only by Home Assistant's own last_reported; settings and
+        flags also by their integration still being active. Counters are never repeated."""
+        cls = freshness_class(m.signal)
+        if cls == "counter" or st.last_updated is None:
+            return None
+        at = st.last_reported if st.last_reported and st.last_reported > st.last_updated else None
+        if at is None and cls == "setting" and self.integration_active(getattr(self.last_states.get(st.entity_id), "platform", None) if hasattr(self, "last_states") else None, now):
+            at = now
+        if at is None or at - st.last_updated < self.CONFIRM_EVERY:
+            return None
+        if at - confirmed.get(st.entity_id, st.last_updated) < self.CONFIRM_EVERY:
+            return None
+        confirmed[st.entity_id] = at
+        beat = measurement_from_state(m, st, at)
+        return beat.model_copy(update={"ts": at}) if beat else None
+
+    def seen_at(self, st) -> datetime | None:
+        stamps = [t for t in (st.last_updated, st.last_reported) if t is not None]
+        return max(stamps) if stamps else None
+
+    def integration_active(self, platform: str | None, now: datetime) -> bool | None:
+        """Whether any entity of this integration was written in the last two hours. ``None`` when unknown."""
+        if not platform or not hasattr(self, "last_states") or not getattr(self, "live_states", None):
+            return None
+        ids = [eid for eid, st in self.last_states.items() if st.platform == platform]
+        stamps = [self.seen_at(self.live_states[eid]) for eid in ids if eid in self.live_states]
+        stamps = [t for t in stamps if t is not None]
+        return bool(stamps) and now - max(stamps) <= self.QUIET_AFTER
 
     async def read_history(self, start: datetime, end: datetime) -> list[Measurement]:
         """Hourly long-term statistics: counters and means.
