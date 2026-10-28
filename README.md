@@ -1,6 +1,6 @@
 # Heat Pump Pilot
 
-*Formerly called PredHeat. Renamed so it isn't confused with Predbat's own built-in Predheat feature; nothing about your install, settings or the `sensor.predheat_heat_pump_plan` entity changes.*
+*Formerly called PredHeat. Renamed so it isn't confused with Predbat's own built-in Predheat feature. From 0.9.0 the add-on, its repository and its Predbat sensor all carry the new name, so earlier installs need a one-off move: see the 0.9.0 entry in the changelog.*
 
 **Heat Pump Pilot watches your heat pump, learns how your house holds heat, and works out the cheapest way to keep it warm.**
 
@@ -28,16 +28,16 @@ Out of the box Heat Pump Pilot only watches and advises. Letting it move your se
 
 ## Install
 
-[![Add repository to my Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fbuildwithrhys%2Fpredheat)
+[![Add repository to my Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fbuildwithrhys%2Fheat_pump_pilot)
 
-1. Click the badge above, or in Home Assistant go to **Settings → Add-ons → Add-on store → ⋮ → Repositories** and add `https://github.com/buildwithrhys/predheat`.
+1. Click the badge above, or in Home Assistant go to **Settings → Add-ons → Add-on store → ⋮ → Repositories** and add `https://github.com/buildwithrhys/heat-pump-pilot`.
 2. Find **Heat Pump Pilot** in the store and click **Install**. The image is built on your machine and takes a few minutes.
 3. On the add-on page, switch on **Show in sidebar** and, if you like, **Update automatically**, then click **Start**. Home Assistant leaves both off for every add-on.
 4. Open **Heat Pump Pilot** from the sidebar.
 
 No access token is needed. The add-on reads Home Assistant through the Supervisor.
 
-The badge needs this repository to be public. While it is private, install from a folder instead: copy `predheat/` to `/addons/predheat` on the Home Assistant host, then refresh the add-on store and look under **Local add-ons**.
+The badge needs this repository to be public. While it is private, install from a folder instead: copy `heat_pump_pilot/` to `/addons/heat_pump_pilot` on the Home Assistant host, then refresh the add-on store and look under **Local add-ons**.
 
 ## First run
 
@@ -56,7 +56,7 @@ The add-on's Configuration tab holds only install-time and safety settings: data
 - **Data source**: `home_assistant` for live data, `simulated` to explore the dashboard with a synthetic house.
 - **Operating mode**: Monitor records, prices and advises. Shadow also saves every plan for scoring. Balanced and Max savings allow control, once Allow control and a climate entity are set.
 
-Full details are in [predheat/DOCS.md](predheat/DOCS.md).
+Full details are in [heat_pump_pilot/DOCS.md](heat_pump_pilot/DOCS.md).
 
 ## Safety
 
@@ -64,17 +64,17 @@ One module can write to Home Assistant and it can do one thing: set the target o
 
 ## For developers
 
-The repository is a Home Assistant add-on repository. `repository.yaml` marks it as such and `predheat/` is the add-on, which is also the Docker build context, so the Python package, tests and the React dashboard live inside it. The design documents are at the top level: [ARCHITECTURE.md](ARCHITECTURE.md), [DATA_MODEL.md](DATA_MODEL.md), [INTEGRATIONS.md](INTEGRATIONS.md), [VALIDATION.md](VALIDATION.md), [ROADMAP.md](ROADMAP.md).
+The repository is a Home Assistant add-on repository. `repository.yaml` marks it as such and `heat_pump_pilot/` is the add-on, which is also the Docker build context, so the Python package, tests and the React dashboard live inside it. The design documents are at the top level: [ARCHITECTURE.md](ARCHITECTURE.md), [DATA_MODEL.md](DATA_MODEL.md), [INTEGRATIONS.md](INTEGRATIONS.md), [VALIDATION.md](VALIDATION.md), [ROADMAP.md](ROADMAP.md).
 
 Run it outside Home Assistant with simulated data:
 
 ```bash
-cd predheat
+cd heat_pump_pilot
 uv venv .venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 pytest
-predheat bootstrap          # creates data/predheat.sqlite with 14 simulated days
-predheat serve              # API on http://127.0.0.1:8750, docs at /docs
+heat-pump-pilot bootstrap          # creates data/heat_pump_pilot.sqlite with 14 simulated days
+heat-pump-pilot serve              # API on http://127.0.0.1:8750, docs at /docs
 cd frontend && npm install && npm run dev   # dashboard on http://localhost:5173
 ```
 

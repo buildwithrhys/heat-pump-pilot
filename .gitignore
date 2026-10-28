@@ -9,7 +9,7 @@ data/
 docs/discovery/latest.*
 **/node_modules/
 **/frontend/dist/
-predheat/static/
+heat_pump_pilot/static/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm

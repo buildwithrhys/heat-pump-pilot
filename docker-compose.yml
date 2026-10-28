@@ -1,6 +1,6 @@
 services:
-  predheat:
-    build: ./predheat
+  heat_pump_pilot:
+    build: ./heat_pump_pilot
     env_file: .env
     ports: ["8750:8750"]
     volumes: ["./data:/data"]

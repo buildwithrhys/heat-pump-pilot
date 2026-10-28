@@ -1,0 +1,28 @@
+name: Heat Pump Pilot
+version: "0.9.0"
+slug: heat_pump_pilot
+description: Self-learning heat pump and home energy optimiser.
+url: https://github.com/buildwithrhys/heat-pump-pilot
+arch:
+  - aarch64
+  - amd64
+startup: application
+boot: auto
+init: false
+homeassistant_api: true
+hassio_api: false
+ingress: true
+ingress_port: 8750
+panel_icon: mdi:heat-pump
+panel_title: Heat Pump Pilot
+watchdog: http://[HOST]:[PORT:8750]/api/health
+ports:
+  8750/tcp: null
+ports_description:
+  8750/tcp: Direct access to the API and dashboard. Optional, the sidebar panel uses ingress.
+options:
+  poll_seconds: 300
+  log_level: info
+schema:
+  poll_seconds: int(60,3600)?
+  log_level: list(debug|info|warning|error)?

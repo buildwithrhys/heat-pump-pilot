@@ -1,0 +1,63 @@
+import { useEffect, useState } from "react";
+import { api, MODE_LABEL, type Overview } from "./api";
+import OverviewPage from "./pages/OverviewPage";
+import CostsPage from "./pages/CostsPage";
+import ForecastPage from "./pages/ForecastPage";
+import SystemPage from "./pages/SystemPage";
+import TariffsPage from "./pages/TariffsPage";
+import SettingsPage from "./pages/SettingsPage";
+
+const TABS = ["Overview", "Energy costs", "Forecast", "Tariffs", "System health", "Settings"] as const;
+type Tab = (typeof TABS)[number];
+
+export default function App() {
+  const [tab, setTab] = useState<Tab>(() => {
+    try { return (localStorage.getItem("heat_pump_pilot.tab") as Tab) || "Overview"; } catch { return "Overview"; }
+  });
+  const [meta, setMeta] = useState<Pick<Overview, "data_mode" | "operating_mode" | "control_enabled"> | null>(null);
+  const [newVersion, setNewVersion] = useState<string | null>(null);
+  useEffect(() => {
+    const onStale = (e: Event) => setNewVersion((e as CustomEvent<string | null>).detail ?? "");
+    window.addEventListener("heat_pump_pilot:stale", onStale);
+    return () => window.removeEventListener("heat_pump_pilot:stale", onStale);
+  }, []);
+  useEffect(() => {
+    api.overview().then((o) => setMeta(o)).catch(() => setMeta(null));
+    const onTab = (e: Event) => setTab((e as CustomEvent<string>).detail as Tab);
+    const onMode = (e: Event) => { const d = (e as CustomEvent<{ mode: string; control: boolean }>).detail; setMeta((m) => (m ? { ...m, operating_mode: d.mode, control_enabled: d.control } : m)); };
+    window.addEventListener("heat_pump_pilot:tab", onTab);
+    window.addEventListener("heat_pump_pilot:mode", onMode);
+    return () => { window.removeEventListener("heat_pump_pilot:tab", onTab); window.removeEventListener("heat_pump_pilot:mode", onMode); };
+  }, []);
+  const pick = (t: Tab) => { setTab(t); try { localStorage.setItem("heat_pump_pilot.tab", t); } catch { /* ignore */ } };
+
+  return (
+    <div className="shell">
+      <header className="top">
+        <h1>Heat Pump Pilot</h1>
+        {meta && (
+          <span className="mode">
+            {meta.data_mode === "simulated" ? "Simulated data" : "Live data"} · {MODE_LABEL[meta.operating_mode] ?? meta.operating_mode} · {meta.control_enabled ? "controlling the heating" : "not controlling the heating"}
+          </span>
+        )}
+      </header>
+      {newVersion !== null && (
+        <p className="note warn" role="status">
+          Heat Pump Pilot has been updated{newVersion ? ` to ${newVersion}` : ""} since this page was opened, so some of what you see may be missing or out of date.{" "}
+          <button type="button" className="linkish" onClick={() => window.location.reload()}>Reload to see the new version</button>
+        </p>
+      )}
+      <nav className="tabs" aria-label="Sections">
+        {TABS.map((t) => (
+          <button key={t} className={t === tab ? "active" : ""} onClick={() => pick(t)}>{t}</button>
+        ))}
+      </nav>
+      {tab === "Overview" && <OverviewPage />}
+      {tab === "Energy costs" && <CostsPage />}
+      {tab === "Forecast" && <ForecastPage />}
+      {tab === "Tariffs" && <TariffsPage />}
+      {tab === "System health" && <SystemPage />}
+      {tab === "Settings" && <SettingsPage />}
+    </div>
+  );
+}
