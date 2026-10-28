@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.1
+
+- The add-on store logo no longer shows the old PredHeat name; it is now just the house icon.
+
 ## 0.9.0
 
 **Heat Pump Pilot, properly renamed. This is a new add-on as far as Home Assistant is concerned, so existing installs need a one-off move.**

@@ -1,6 +1,6 @@
 [project]
 name = "heat_pump_pilot"
-version = "0.9.0"
+version = "0.9.1"
 description = "Heat Pump Pilot: self-learning heat pump and home energy optimiser (Home Assistant proof of concept)"
 readme = "DOCS.md"
 requires-python = ">=3.12"

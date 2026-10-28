@@ -6,4 +6,4 @@ never imports Home Assistant specifics. Integrations live under
 signals defined in ``heat_pump_pilot.domain``.
 """
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
