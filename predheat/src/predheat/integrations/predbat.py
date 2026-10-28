@@ -10,7 +10,7 @@ timestamp (repeated values are dropped, so a series is a step function):
   values a stored kWh at, in pence) and ``soc_max``
 - ``<prefix>.rates`` and ``<prefix>.rates_export``: p/kWh
 
-PredHeat uses it to answer one question per half hour: if the heat pump used a little more
+Heat Pump Pilot uses it to answer one question per half hour: if the heat pump used a little more
 electricity now, where would it come from and what would it cost? Less solar export, the
 battery, or the grid. Nothing here writes anything.
 """

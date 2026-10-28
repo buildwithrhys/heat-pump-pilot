@@ -45,11 +45,11 @@ Zone climate target 7 to 35 degC in 0.5 steps with presets boost, away, system o
 
 ## EnergyPLUS and EEBUS
 
-No EEBUS entities are present and the firmware reports external energy management inactive, so no local energy manager is paired. EnergyPLUS, if active on the account, acts through Vaillant's cloud and the controller's own schedules; its decisions would show up as setpoint and DHW changes PredHeat did not make. Recommendation: keep PredHeat in monitor mode, log every setpoint change observed with the `energy_manager_state`, and before Phase 5 either disable EnergyPLUS for the trial or document how its actions and PredHeat's are arbitrated.
+No EEBUS entities are present and the firmware reports external energy management inactive, so no local energy manager is paired. EnergyPLUS, if active on the account, acts through Vaillant's cloud and the controller's own schedules; its decisions would show up as setpoint and DHW changes Heat Pump Pilot did not make. Recommendation: keep Heat Pump Pilot in monitor mode, log every setpoint change observed with the `energy_manager_state`, and before Phase 5 either disable EnergyPLUS for the trial or document how its actions and Heat Pump Pilot's are arbitrated.
 
 ## Data quality observations
 
-Vaillant energy is hourly and arrives late; PredHeat resamples to half hours and labels the result model derived. The time programme setpoint of 29 degC while in Manual mode at 23 degC looks like a placeholder; switching the zone to time-controlled would apply it, so it should be checked in the app before any control experiments. The Ohme charger appears as a second unavailable intelligent device in Octopus; ignored. Wiser TRVs are all offline; re-powering them would provide nine room temperatures. The Huawei grid meter reports import as negative power; sign is normalised in the mapping.
+Vaillant energy is hourly and arrives late; Heat Pump Pilot resamples to half hours and labels the result model derived. The time programme setpoint of 29 degC while in Manual mode at 23 degC looks like a placeholder; switching the zone to time-controlled would apply it, so it should be checked in the app before any control experiments. The Ohme charger appears as a second unavailable intelligent device in Octopus; ignored. Wiser TRVs are all offline; re-powering them would provide nine room temperatures. The Huawei grid meter reports import as negative power; sign is normalised in the mapping.
 
 ## Recommendations carried into Phase 1
 

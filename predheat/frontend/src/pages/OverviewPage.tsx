@@ -47,7 +47,7 @@ export default function OverviewPage() {
     const id = setInterval(load, 60_000);
     return () => clearInterval(id);
   }, []);
-  if (err) return <p className="err">Could not reach the PredHeat API: {err}</p>;
+  if (err) return <p className="err">Could not reach the Heat Pump Pilot API: {err}</p>;
   if (!o) return <p className="muted">Loading…</p>;
   const t = o.today;
   return (
@@ -92,7 +92,7 @@ export default function OverviewPage() {
       </div>
 
       <div className="section">
-        <h2>What PredHeat would do</h2>
+        <h2>What Heat Pump Pilot would do</h2>
         <div className="card">
           <h3>{o.next_action.state === "now" ? "Now" : "Next"}{o.operating_mode === "monitor" ? <span className="tag" title={tip("monitor_plan")}>Monitor mode: shown only, nothing acts</span> : o.operating_mode === "shadow" ? <span className="tag" title={tip("shadow_plan")}>Shadow mode: this plan is saved and scored</span> : <span className="tag measured">acting on this plan</span>}</h3>
           <div className="big" style={{ fontSize: "1.1rem" }}>{o.next_action.kind === "none" ? "Nothing to shift" : o.next_action.label ?? o.next_action.kind}</div>

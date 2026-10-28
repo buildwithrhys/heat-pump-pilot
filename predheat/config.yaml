@@ -1,5 +1,5 @@
-name: PredHeat
-version: "0.7.0"
+name: Heat Pump Pilot
+version: "0.8.0"
 slug: predheat
 description: Self-learning heat pump and home energy optimiser.
 url: https://github.com/buildwithrhys/predheat
@@ -14,7 +14,7 @@ hassio_api: false
 ingress: true
 ingress_port: 8750
 panel_icon: mdi:heat-pump
-panel_title: PredHeat
+panel_title: Heat Pump Pilot
 watchdog: http://[HOST]:[PORT:8750]/api/health
 ports:
   8750/tcp: null

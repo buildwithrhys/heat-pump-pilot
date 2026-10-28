@@ -33,7 +33,7 @@ export default function TariffsPage() {
         <p className="sources-line">No yearly estimate yet. {t.annual.reason}</p>
       ) : null}
       {t.actual && (
-        <p className="sources-line">Compared on {num(t.actual.coverage_pct, 0, "%")} of your electricity ({num(t.actual.kwh, 0, " kWh")} of {num(t.actual.kwh_total, 0, " kWh")}, {t.actual.days_priced} {t.actual.days_priced === 1 ? "day" : "days"}): the half-hours for which PredHeat has your actual prices. The rest is left out of every figure below.<Term k="price_coverage" /></p>
+        <p className="sources-line">Compared on {num(t.actual.coverage_pct, 0, "%")} of your electricity ({num(t.actual.kwh, 0, " kWh")} of {num(t.actual.kwh_total, 0, " kWh")}, {t.actual.days_priced} {t.actual.days_priced === 1 ? "day" : "days"}): the half-hours for which Heat Pump Pilot has your actual prices. The rest is left out of every figure below.<Term k="price_coverage" /></p>
       )}
       {t.reconciliation && t.reconciliation.difference_pct != null && Math.abs(t.reconciliation.difference_pct) > 5 && (
         <div className="note warn">Your tariff's standard rates, replayed on the same half-hours, come to {pounds(t.reconciliation.template_unit_pence)} against the {pounds(t.reconciliation.actual_unit_pence)} you actually paid ({t.reconciliation.difference_pct > 0 ? "+" : ""}{t.reconciliation.difference_pct.toFixed(0)}%). The difference is usually extra cheap Intelligent Octopus slots the standard rates cannot model, so the other tariffs below may look {t.reconciliation.difference_pct > 0 ? "dearer" : "cheaper"} than they would really be for you.<Term k="reconciliation" /></div>

@@ -1,6 +1,6 @@
 # Validation
 
-How PredHeat measures its own accuracy, and the bar it must clear before any saving is claimed.
+How Heat Pump Pilot measures its own accuracy, and the bar it must clear before any saving is claimed.
 
 ## Measurement validation (Phases 1 and 2)
 
@@ -8,7 +8,7 @@ Daily heat pump electricity from the Vaillant counters is compared with the myVA
 
 ## Pricing validation
 
-Rates stored by PredHeat are compared with Octopus's published half-hourly costs for the previous day (`previous_accumulative_cost` and its `charges`). Clock-change days (46 and 50 slots) and dispatch-adjusted slots are covered by unit tests using the pilot's own 25 October 2026 rate list.
+Rates stored by Heat Pump Pilot are compared with Octopus's published half-hourly costs for the previous day (`previous_accumulative_cost` and its `charges`). Clock-change days (46 and 50 slots) and dispatch-adjusted slots are covered by unit tests using the pilot's own 25 October 2026 rate list.
 
 ## Model validation (Phase 3)
 

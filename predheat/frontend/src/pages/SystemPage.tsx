@@ -4,7 +4,7 @@ import { GLOSSARY, Term } from "../glossary";
 
 const QUALITY_LABEL: Record<string, [string, string]> = {
   sensor: ["measured", GLOSSARY.quality_sensor], metered: ["metered", GLOSSARY.quality_metered], manufacturer_estimated: ["appliance estimate", GLOSSARY.quality_manufacturer_estimated],
-  model_derived: ["PredHeat estimate", GLOSSARY.quality_model_derived], forecast: ["forecast", GLOSSARY.quality_forecast], simulated: ["simulated", GLOSSARY.quality_simulated], unavailable: ["none", GLOSSARY.status_unavailable],
+  model_derived: ["Heat Pump Pilot estimate", GLOSSARY.quality_model_derived], forecast: ["forecast", GLOSSARY.quality_forecast], simulated: ["simulated", GLOSSARY.quality_simulated], unavailable: ["none", GLOSSARY.status_unavailable],
 };
 const STATUS_LABEL: Record<string, [string, string]> = { available: ["live", GLOSSARY.status_live], degraded: ["found, not updating", GLOSSARY.status_degraded], unavailable: ["not found", GLOSSARY.status_unavailable] };
 
@@ -123,7 +123,7 @@ export default function SystemPage() {
           </div>
         )}
         {s.forecast_accuracy.cost_backtest?.status === "ok" && (
-          <p style={{ fontSize: 13 }}>Cost check: the model expected the heating to cost {pounds(s.forecast_accuracy.cost_backtest.predicted_pence ?? 0)} over {s.forecast_accuracy.cost_backtest.slots} scored half-hours; it actually cost {pounds(s.forecast_accuracy.cost_backtest.actual_pence ?? 0)}{s.forecast_accuracy.cost_backtest.error_pct != null ? ` (${s.forecast_accuracy.cost_backtest.error_pct > 0 ? "+" : ""}${s.forecast_accuracy.cost_backtest.error_pct}%)` : ""}, using the prices PredHeat had at the time.<Term text="Scores the plan on what it knew when it was made: predicted thermostat cost per half hour against the heating electricity actually used, at the stored prices." /></p>
+          <p style={{ fontSize: 13 }}>Cost check: the model expected the heating to cost {pounds(s.forecast_accuracy.cost_backtest.predicted_pence ?? 0)} over {s.forecast_accuracy.cost_backtest.slots} scored half-hours; it actually cost {pounds(s.forecast_accuracy.cost_backtest.actual_pence ?? 0)}{s.forecast_accuracy.cost_backtest.error_pct != null ? ` (${s.forecast_accuracy.cost_backtest.error_pct > 0 ? "+" : ""}${s.forecast_accuracy.cost_backtest.error_pct}%)` : ""}, using the prices Heat Pump Pilot had at the time.<Term text="Scores the plan on what it knew when it was made: predicted thermostat cost per half hour against the heating electricity actually used, at the stored prices." /></p>
         )}
         {s.forecast_accuracy.note && <p className="muted" style={{ fontSize: 12 }}>{s.forecast_accuracy.note}</p>}
       </div>
@@ -164,9 +164,9 @@ export default function SystemPage() {
                 <h3>Shared with Predbat<Term k="predbat_feed" /></h3>
                 <div className="big" style={s.predbat_feed.enabled && s.predbat_feed.status === "ok" ? undefined : { fontSize: "1.1rem" }}>{!s.predbat_feed.enabled ? "Off" : s.predbat_feed.status === "ok" ? `${num(s.predbat_feed.extra_kwh, 1)} kWh` : "Nothing to add"}</div>
                 <div className="sub" title={s.predbat_feed.reason}>
-                  {!s.predbat_feed.enabled ? "\"Share PredHeat's plan with Predbat\" is off on the Settings tab"
+                  {!s.predbat_feed.enabled ? "\"Share Heat Pump Pilot's plan with Predbat\" is off on the Settings tab"
                     : s.predbat_feed.status === "ok" ? `heating planned above recent days, next 24 hours (of ${num(s.predbat_feed.planned_kwh, 1)} kWh planned)`
-                    : s.predbat_feed.status === "not_acting" ? "PredHeat is not controlling the heating, so the heat pump will use what it usually does"
+                    : s.predbat_feed.status === "not_acting" ? "Heat Pump Pilot is not controlling the heating, so the heat pump will use what it usually does"
                     : "waiting for the learned house model"}
                 </div>
               </div>

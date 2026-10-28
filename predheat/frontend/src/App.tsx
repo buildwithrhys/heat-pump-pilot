@@ -34,7 +34,7 @@ export default function App() {
   return (
     <div className="shell">
       <header className="top">
-        <h1>PredHeat</h1>
+        <h1>Heat Pump Pilot</h1>
         {meta && (
           <span className="mode">
             {meta.data_mode === "simulated" ? "Simulated data" : "Live data"} · {MODE_LABEL[meta.operating_mode] ?? meta.operating_mode} · {meta.control_enabled ? "controlling the heating" : "not controlling the heating"}
@@ -43,7 +43,7 @@ export default function App() {
       </header>
       {newVersion !== null && (
         <p className="note warn" role="status">
-          PredHeat has been updated{newVersion ? ` to ${newVersion}` : ""} since this page was opened, so some of what you see may be missing or out of date.{" "}
+          Heat Pump Pilot has been updated{newVersion ? ` to ${newVersion}` : ""} since this page was opened, so some of what you see may be missing or out of date.{" "}
           <button type="button" className="linkish" onClick={() => window.location.reload()}>Reload to see the new version</button>
         </p>
       )}

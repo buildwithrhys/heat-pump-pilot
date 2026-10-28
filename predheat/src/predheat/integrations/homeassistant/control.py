@@ -1,4 +1,4 @@
-"""The one place PredHeat writes to Home Assistant.
+"""The one place Heat Pump Pilot writes to Home Assistant.
 
 Kept separate from the read-only client on purpose: nothing else imports this
 module, and it offers three capabilities: setting a target temperature on the
@@ -6,7 +6,7 @@ climate entity or the water_heater entity the user named (through ``Controller``
 under its guards), and setting one of the three Vaillant heating-curve number
 entities when the user confirms a change on the heating curve check (through
 ``Platform.apply_curve_setting``, bounded and logged, with undo), and publishing
-PredHeat's own ``sensor.predheat_*`` entities (its heating plan, for Predbat).
+Heat Pump Pilot's own ``sensor.predheat_*`` entities (its heating plan, for Predbat).
 """
 
 from __future__ import annotations
@@ -56,10 +56,10 @@ class HAControlAdapter:
 
 
     async def publish_state(self, entity_id: str, state: str, attributes: dict) -> None:
-        """Create or refresh PredHeat's own sensor in Home Assistant (its plan, for Predbat to read).
+        """Create or refresh Heat Pump Pilot's own sensor in Home Assistant (its plan, for Predbat to read).
         Only entities named ``sensor.predheat_*`` can be written this way; nothing else is touched."""
         if not entity_id.startswith("sensor.predheat_"):
-            raise ValueError("only PredHeat's own sensors can be published")
+            raise ValueError("only Heat Pump Pilot's own sensors can be published")
         r = await self.client._http.post(f"/api/states/{entity_id}", json={"state": state, "attributes": attributes})
         r.raise_for_status()
 
@@ -98,5 +98,5 @@ class RecordingControlAdapter:
 
     async def publish_state(self, entity_id: str, state: str, attributes: dict) -> None:
         if not entity_id.startswith("sensor.predheat_"):
-            raise ValueError("only PredHeat's own sensors can be published")
+            raise ValueError("only Heat Pump Pilot's own sensors can be published")
         self.published[entity_id] = {"state": state, "attributes": attributes}

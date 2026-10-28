@@ -14,7 +14,7 @@ from rich.table import Table
 from .config import DataMode, get_settings
 from .service import build_platform
 
-app = typer.Typer(help="PredHeat: heat pump and home energy optimiser (read-only PoC).", no_args_is_help=True)
+app = typer.Typer(help="Heat Pump Pilot: heat pump and home energy optimiser (read-only PoC).", no_args_is_help=True)
 console = Console()
 
 

@@ -11,7 +11,7 @@ offsets, and only when every guard passes on every cycle:
    ``control_override_hours``.
 4. The house is not already below the comfort band.
 
-If any guard fails while PredHeat holds the setpoint, it hands the original
+If any guard fails while Heat Pump Pilot holds the setpoint, it hands the original
 setpoint back and logs why. Every proposal, write, failure and release is
 recorded in ``control_execution_log``.
 """

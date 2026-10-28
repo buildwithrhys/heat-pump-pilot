@@ -1,6 +1,6 @@
 """The canonical signal catalogue (data dictionary).
 
-A *signal* is a named, unit-fixed quantity PredHeat understands, independent of
+A *signal* is a named, unit-fixed quantity Heat Pump Pilot understands, independent of
 where it comes from. Integrations map their native entities onto signals.
 Discovery uses the hints below to propose mappings; the user can override them.
 

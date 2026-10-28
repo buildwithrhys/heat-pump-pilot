@@ -2,7 +2,7 @@
 
 This is the stand-in for the learned optimiser that arrives in Phase 4. It looks
 at the next day of classified prices, the weather forecast and the latest
-readings, and writes down what PredHeat *would* do if it were in charge: when it
+readings, and writes down what Heat Pump Pilot *would* do if it were in charge: when it
 would reheat the hot water cylinder, when it would pre-heat the house ahead of
 expensive electricity, and when it would let the house coast.
 
@@ -101,7 +101,7 @@ def build_shadow_plan(
     priced = [s for s in planning_prices(slots) if not math.isnan(s.rate_p_per_kwh) and s.end > now and s.start < horizon_end]
     assumptions = [
         "Rule-based plan: the learned house model is not in use yet.",
-        "Setpoint changes of about 1 °C are assumed. This is what PredHeat would do; it only acts if control is switched on.",
+        "Setpoint changes of about 1 °C are assumed. This is what Heat Pump Pilot would do; it only acts if control is switched on.",
     ]
     base = {"horizon_start": now.isoformat(), "horizon_end": horizon_end.isoformat(), "assumptions": assumptions}
     if not priced:

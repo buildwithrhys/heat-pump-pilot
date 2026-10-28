@@ -10,7 +10,7 @@ Timestamps are stored in UTC and rendered in the property's timezone (`Europe/Lo
 
 Every measurement, interval and cost row carries `quality` and `provenance`.
 
-Quality values: `metered` (independent meter: smart meter, CT clamp, heat meter), `sensor` (physical temperature, pressure, humidity), `manufacturer_estimated` (appliance controller's own calculation, for example all Vaillant energy and COP figures), `model_derived` (PredHeat calculation or allocation, including half-hour resampling of hourly buckets), `forecast`, `simulated`, `unavailable`.
+Quality values: `metered` (independent meter: smart meter, CT clamp, heat meter), `sensor` (physical temperature, pressure, humidity), `manufacturer_estimated` (appliance controller's own calculation, for example all Vaillant energy and COP figures), `model_derived` (Heat Pump Pilot calculation or allocation, including half-hour resampling of hourly buckets), `forecast`, `simulated`, `unavailable`.
 
 Provenance values name the system that produced the value (`vaillant_mypyllant`, `octopus_ha_integration`, `openweather_ha_integration`, `solcast_ha_integration`, `huawei_solar_ha_integration`, `predheat`, `simulator`, `user`, plus direct API variants for later phases).
 

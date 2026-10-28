@@ -62,13 +62,13 @@ export function HeatingCurveCheck() {
       <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <h3 style={{ marginTop: 0 }}>{pending.undo ? "Put back" : "Change"} {pending.setting.label.toLowerCase()} to {fmt(pending.setting.key, pending.value)}?</h3>
         <p style={{ fontSize: 14 }}>
-          PredHeat will set <code>{c.writable[pending.setting.key]?.entity_id}</code> from {fmt(pending.setting.key, pending.setting.now)} to {fmt(pending.setting.key, pending.value)} on your Vaillant controller, once.
+          Heat Pump Pilot will set <code>{c.writable[pending.setting.key]?.entity_id}</code> from {fmt(pending.setting.key, pending.setting.now)} to {fmt(pending.setting.key, pending.value)} on your Vaillant controller, once.
           {pending.undo ? "" : " It will not change it again by itself. You can undo it here at any time."}
         </p>
         {!pending.undo && pending.setting.key === "heating_curve" && c.direction === "lower" && (
           <p style={{ fontSize: 14 }}>Rooms will warm up a little more slowly after a setback. If the house does not reach your setpoint in the next cold spell, raise it again.</p>
         )}
-        {c.writable[pending.setting.key]?.ambiguous && <p className="note warn">More than one matching setting was found in Home Assistant; PredHeat picked the main heating circuit. Check the entity name above.</p>}
+        {c.writable[pending.setting.key]?.ambiguous && <p className="note warn">More than one matching setting was found in Home Assistant; Heat Pump Pilot picked the main heating circuit. Check the entity name above.</p>}
         <div className="row" style={{ justifyContent: "flex-end", marginBottom: 0 }}>
           <button type="button" className="chip" disabled={busy} onClick={() => setPending(null)}>Cancel</button>
           <button type="button" className="chip primary" disabled={busy} onClick={confirm}>{busy ? "Saving…" : pending.undo ? "Put back" : "Change"}</button>
@@ -178,7 +178,7 @@ export function HeatingCurveCheck() {
       </div>
       <p className="sources-line" style={{ marginTop: 8 }}>
         {anyWritable
-          ? "Change sets the value on your Vaillant controller once, through Home Assistant, and only when you confirm. PredHeat never changes these settings by itself."
+          ? "Change sets the value on your Vaillant controller once, through Home Assistant, and only when you confirm. Heat Pump Pilot never changes these settings by itself."
           : "Home Assistant does not offer these settings as adjustable entities on your system, so change them in the myVAILLANT app."}
         {" "}Lower the curve one step at a time and give it a few days; if a room feels cold, put it back.<Term k="curve_margin" />
       </p>

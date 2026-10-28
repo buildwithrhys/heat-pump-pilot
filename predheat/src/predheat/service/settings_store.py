@@ -2,7 +2,7 @@
 
 Stored as ``settings.json`` in the data directory. The Supervisor configuration
 keeps only install-time and safety settings; these four are the ones a person
-adjusts while using PredHeat. The operating mode can only be set to a
+adjusts while using Heat Pump Pilot. The operating mode can only be set to a
 controlling mode when the Supervisor side has enabled control and named a
 climate entity, so the dashboard cannot widen what the admin allowed.
 """
@@ -28,9 +28,9 @@ MODE_LINES = {
 
 FIELDS: dict[str, dict[str, Any]] = {
     "control_enabled": {"type": "bool", "default": False, "group": "control", "label": "Allow control",
-                        "help": "Lets PredHeat move your room setpoint when the operating mode is Balanced or Max savings. Off takes effect on the next cycle."},
+                        "help": "Lets Heat Pump Pilot move your room setpoint when the operating mode is Balanced or Max savings. Off takes effect on the next cycle."},
     "control_climate_entity": {"type": "entity", "default": None, "optional": True, "group": "control", "label": "Climate entity",
-                               "help": "The heating zone PredHeat may adjust. The only entity it ever writes to."},
+                               "help": "The heating zone Heat Pump Pilot may adjust. The only entity it ever writes to."},
     "operating_mode": {"type": "enum", "default": "monitor", "choices": ["monitor", "shadow", "balanced", "max_savings"],
                        "labels": {"monitor": "Monitor", "shadow": "Shadow", "balanced": "Balanced", "max_savings": "Max savings"},
                        "lines": MODE_LINES, "group": "control", "label": "Operating mode",
@@ -40,13 +40,13 @@ FIELDS: dict[str, dict[str, Any]] = {
     "boiler_efficiency": {"type": "number", "default": 0.85, "min": 0.5, "max": 1.0, "step": 0.01, "unit": "", "group": "comparisons",
                           "label": "Gas boiler efficiency", "help": "Seasonal efficiency the comparison assumes. 0.85 suits a modern condensing boiler; older ones are nearer 0.75."},
     "control_dhw_entity": {"type": "entity", "default": None, "optional": True, "group": "control", "label": "Hot water entity (optional)",
-                           "help": "The water_heater entity for the cylinder. When set, PredHeat raises its target during a planned reheat and restores it afterwards."},
+                           "help": "The water_heater entity for the cylinder. When set, Heat Pump Pilot raises its target during a planned reheat and restores it afterwards."},
     "trial_mode": {"type": "bool", "default": False, "group": "control", "label": "Trial: alternate days",
-                   "help": "Alternates whole days between PredHeat acting and your ordinary thermostat, so the saving can be measured fairly. Results appear on the Energy costs tab after a couple of weeks."},
+                   "help": "Alternates whole days between Heat Pump Pilot acting and your ordinary thermostat, so the saving can be measured fairly. Results appear on the Energy costs tab after a couple of weeks."},
     "control_max_offset_c": {"type": "number", "default": 1.0, "min": 0.0, "max": 2.0, "step": 0.5, "unit": "°C", "group": "control",
-                             "label": "Maximum setpoint offset", "help": "How far PredHeat may move your setpoint either way when control is on. Max savings uses one and a half times this, capped at 2 °C."},
+                             "label": "Maximum setpoint offset", "help": "How far Heat Pump Pilot may move your setpoint either way when control is on. Max savings uses one and a half times this, capped at 2 °C."},
     "design_outdoor_c": {"type": "number", "default": None, "min": -10.0, "max": 5.0, "step": 0.5, "unit": "°C", "optional": True, "group": "advanced",
-                         "label": "Design outdoor temperature", "help": "The outdoor temperature heat loss is quoted at, as in a survey. Leave empty to use the regional value PredHeat picks from your home location."},
+                         "label": "Design outdoor temperature", "help": "The outdoor temperature heat loss is quoted at, as in a survey. Leave empty to use the regional value Heat Pump Pilot picks from your home location."},
     "gas_standing_charge_p_per_day": {"type": "number", "default": None, "min": 0.0, "max": 200.0, "step": 0.01, "unit": "p/day", "optional": True, "group": "comparisons",
                                       "label": "Gas standing charge", "help": "Optional. The daily standing charge you would pay for a gas supply. When set, the \"same heat on gas\" comparison adds it to the gas side for each day compared, because a household heating with gas pays it on top of the gas used. Your electricity standing charge is left out of both sides, because you pay it either way."},
     "survey_heat_loss_kw": {"type": "number", "default": None, "min": 0.5, "max": 40.0, "step": 0.1, "unit": "kW", "optional": True, "group": "comparisons",
@@ -55,12 +55,12 @@ FIELDS: dict[str, dict[str, Any]] = {
                          "label": "Survey outdoor temperature", "help": "The outdoor temperature the surveyed figure was quoted at. Leave empty to assume the design temperature above."},
     "heat_pump_rated_kw": {"type": "number", "default": None, "min": 1.0, "max": 50.0, "step": 0.5, "unit": "kW", "optional": True, "group": "comparisons",
                            "label": "Heat pump rated output", "help": "Nameplate heating output, for example 7 for an aroTHERM plus 7 kW. Used to show the margin over your heat loss."},
-    "publish_for_predbat": {"type": "bool", "default": True, "group": "advanced", "label": "Share PredHeat's plan with Predbat",
-                            "help": "Publishes sensor.predheat_heat_pump_plan in Home Assistant: the heating PredHeat plans above what recent days used, in the format Predbat reads as an extra load forecast. "
-                                    "Empty while PredHeat is not controlling the heating. Predbat uses it only once you add it to load_forecast in Predbat's apps.yaml (see System health)."},
+    "publish_for_predbat": {"type": "bool", "default": True, "group": "advanced", "label": "Share Heat Pump Pilot's plan with Predbat",
+                            "help": "Publishes sensor.predheat_heat_pump_plan in Home Assistant: the heating Heat Pump Pilot plans above what recent days used, in the format Predbat reads as an extra load forecast. "
+                                    "Empty while Heat Pump Pilot is not controlling the heating. Predbat uses it only once you add it to load_forecast in Predbat's apps.yaml (see System health)."},
     "use_predbat": {"type": "bool", "default": True, "group": "advanced", "label": "Use Predbat's battery plan",
-                    "help": "When Predbat is installed, PredHeat reads its battery and solar plan to work out what extra heating would really cost in each half hour: "
-                            "solar you would otherwise export, the battery, or the grid. Read only; PredHeat never changes anything in Predbat. Has no effect without Predbat."},
+                    "help": "When Predbat is installed, Heat Pump Pilot reads its battery and solar plan to work out what extra heating would really cost in each half hour: "
+                            "solar you would otherwise export, the battery, or the grid. Read only; Heat Pump Pilot never changes anything in Predbat. Has no effect without Predbat."},
 }
 OPTION_KEYS = ("control_enabled", "control_climate_entity", "control_dhw_entity", "trial_mode", "operating_mode", "control_max_offset_c",
                "gas_price_p_per_kwh", "gas_standing_charge_p_per_day", "boiler_efficiency", "survey_heat_loss_kw", "survey_outdoor_c", "heat_pump_rated_kw",

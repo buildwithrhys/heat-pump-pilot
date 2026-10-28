@@ -1,4 +1,4 @@
-# PredHeat Home Assistant add-on image.
+# Heat Pump Pilot Home Assistant add-on image.
 # Stage 1 builds the React dashboard; stage 2 installs the Python service and
 # serves the built dashboard from /app/static.
 

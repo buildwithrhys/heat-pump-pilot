@@ -165,7 +165,7 @@ def test_setting_is_stored_and_applied(tmp_path):
     assert settings.use_predbat is False and SettingsStore.load(tmp_path).values["use_predbat"] is False
 
 
-# ---------------------------------------------------------------- sharing PredHeat's plan with Predbat
+# ---------------------------------------------------------------- sharing Heat Pump Pilot's plan with Predbat
 
 
 def _acting_platform(tmp_path, **kw):

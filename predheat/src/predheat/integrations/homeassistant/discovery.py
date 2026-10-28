@@ -193,7 +193,7 @@ def discover_capabilities(
     ems = next((s for s in states if s.entity_id.endswith("energy_manager_state")), None)
     if ems:
         warnings.append(
-            f"Vaillant energy manager state is '{ems.state}'. Treat EnergyPLUS/EEBUS as a potential competing controller; PredHeat stays read-only."
+            f"Vaillant energy manager state is '{ems.state}'. Treat EnergyPLUS/EEBUS as a potential competing controller; Heat Pump Pilot stays read-only."
         )
 
     return CapabilityReport(

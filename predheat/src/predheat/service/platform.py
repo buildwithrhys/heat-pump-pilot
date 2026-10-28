@@ -280,7 +280,7 @@ class Platform:
         enabled = bool(getattr(self.settings, "use_predbat", True))
         if p is None:
             return {"installed": False, "enabled": enabled, "in_use": False,
-                    "reason": "Predbat was not found in Home Assistant. PredHeat prices heating at your grid tariff alone."}
+                    "reason": "Predbat was not found in Home Assistant. Heat Pump Pilot prices heating at your grid tariff alone."}
         age = (now - p.updated_at).total_seconds() / 60.0 if p.updated_at else None
         base = {"installed": True, "enabled": enabled, "prefix": p.prefix, "entities": p.entities,
                 "updated_at": p.updated_at.isoformat() if p.updated_at else None, "age_minutes": round(age, 0) if age is not None else None,
@@ -289,7 +289,7 @@ class Platform:
             return {**base, "in_use": False, "reason": "Predbat is installed, but \"Use Predbat's battery plan\" is off on the Settings tab."}
         if not p.fresh(now):
             return {**base, "in_use": False,
-                    "reason": f"Predbat's plan was last updated {round(age or 0)} minutes ago; PredHeat uses it only when it is under 30 minutes old, and uses your grid tariff alone until then."}
+                    "reason": f"Predbat's plan was last updated {round(age or 0)} minutes ago; Heat Pump Pilot uses it only when it is under 30 minutes old, and uses your grid tariff alone until then."}
         return {**base, "in_use": True, "reason": "Using Predbat's battery and solar plan to work out what extra heating would cost in each half hour."}
 
     def _predbat_prices(self, slots: list[SlotPrice], now: datetime, extra_kw: float) -> tuple[list[SlotPrice], list[dict[str, Any]]]:
@@ -318,8 +318,8 @@ class Platform:
         return {k: v / seen_days for k, v in acc.items()}
 
     def predbat_feed(self, s, now: datetime | None = None) -> dict[str, Any]:
-        """What PredHeat shares with Predbat: heating it plans above what recent days used, as an
-        incrementing kWh series (Predbat's load_forecast format). Empty while PredHeat is not acting."""
+        """What Heat Pump Pilot shares with Predbat: heating it plans above what recent days used, as an
+        incrementing kWh series (Predbat's load_forecast format). Empty while Heat Pump Pilot is not acting."""
         now = now or self.clock.now()
         plan = self.shadow_plan(s, now)
         connect = f"{self.FEED_ENTITY}${self.FEED_ATTRIBUTE}"
@@ -328,10 +328,10 @@ class Platform:
         predicted = plan.get("predicted") or []
         if plan.get("status") != "model_based" or not predicted:
             return {**base, "status": "waiting", "extra_kwh": 0.0, "planned_kwh": 0.0, "slots": [],
-                    "reason": "Nothing to share yet: PredHeat shares its plan once the learned house model is ready (see Your house)."}
+                    "reason": "Nothing to share yet: Heat Pump Pilot shares its plan once the learned house model is ready (see Your house)."}
         acting, why = (self.controller.configured() if self.controller is not None else (False, "no controller"))
         usual = self._usual_heating_kwh(s, now)
-        # hot water counts only when PredHeat moves the cylinder reheat (a hot water entity is set)
+        # hot water counts only when Heat Pump Pilot moves the cylinder reheat (a hot water entity is set)
         with_dhw = acting and bool(getattr(self.settings, "control_dhw_entity", None))
         usual_dhw = self._usual_heating_kwh(s, now, signal=Signal.HP_ELEC_DHW_KWH) if with_dhw else {}
         trial = bool(getattr(self.settings, "trial_mode", False))
@@ -350,12 +350,12 @@ class Platform:
             slots.append({"start": p["start"], "planned_kwh": round(planned, 3), "hot_water_kwh": round(dhw, 3), "usual_kwh": round(u, 3),
                           "extra_kwh": round(extra, 3), "ordinary_day": ordinary_day})
         if not acting:
-            reason = ("PredHeat is not controlling the heating (Operating mode is not Balanced or Max savings, or Allow control is off), "
+            reason = ("Heat Pump Pilot is not controlling the heating (Operating mode is not Balanced or Max savings, or Allow control is off), "
                       "so the heat pump will use what it usually does and there is nothing to add to Predbat's forecast.")
         else:
-            reason = ("Heating " + ("and hot water " if with_dhw else "") + "PredHeat plans above what the same half hour used on average over the last 7 days. "
+            reason = ("Heating " + ("and hot water " if with_dhw else "") + "Heat Pump Pilot plans above what the same half hour used on average over the last 7 days. "
                       "Predbat already expects the usual amount from its own history."
-                      + ("" if with_dhw else " Hot water is not included because PredHeat does not move the cylinder reheat (no hot water entity on the Settings tab)."))
+                      + ("" if with_dhw else " Hot water is not included because Heat Pump Pilot does not move the cylinder reheat (no hot water entity on the Settings tab)."))
         return {**base, "status": "ok" if acting else "not_acting", "reason": reason, "slots": slots, "includes_hot_water": with_dhw,
                 "extra_kwh": round(sum(x["extra_kwh"] for x in slots[:48]), 2), "planned_kwh": round(sum(x["planned_kwh"] for x in slots[:48]), 2),
                 "usual_kwh": round(sum(x["usual_kwh"] for x in slots[:48]), 2)}
@@ -383,9 +383,9 @@ class Platform:
                 out.append({"last_updated": end.strftime("%Y-%m-%dT%H:%M:%S%z"), "energy": round(total, 3)})
             return out
 
-        attrs = {"friendly_name": "PredHeat heat pump plan", "unit_of_measurement": "kWh", "icon": "mdi:heat-pump",
+        attrs = {"friendly_name": "Heat Pump Pilot plan", "unit_of_measurement": "kWh", "icon": "mdi:heat-pump",
                  "extra": series("extra_kwh"), "planned": series("planned_kwh"), "status": feed["status"], "reason": feed["reason"],
-                 "generated_at": now.isoformat(), "note": "extra: heat pump use planned above recent days, for Predbat load_forecast. planned: the full plan (space heating, plus hot water when PredHeat controls the cylinder)."}
+                 "generated_at": now.isoformat(), "note": "extra: heat pump use planned above recent days, for Predbat load_forecast. planned: the full plan (space heating, plus hot water when Heat Pump Pilot controls the cylinder)."}
         await self.controller.adapter.publish_state(self.FEED_ENTITY, f"{feed['extra_kwh']:.2f}", attrs)
         return f"published {feed['extra_kwh']:.2f} kWh extra"
 
@@ -559,7 +559,7 @@ class Platform:
             so_far = f"So far: {days_with_data} {'day' if days_with_data == 1 else 'days'}"
             if outdoor_seen:
                 so_far += f", outdoor temperatures {min(outdoor_seen):.0f} to {max(outdoor_seen):.0f} °C"
-            reason = ("PredHeat works out your home's heat loss from how fast it cools between heating cycles. "
+            reason = ("Heat Pump Pilot works out your home's heat loss from how fast it cools between heating cycles. "
                       "It needs about 7 days with the heating running and some colder nights. " + so_far + ".")
             return {**base, "status": "waiting", "reason": reason}
 
@@ -571,7 +571,7 @@ class Platform:
         ua = fit.ua_w_per_k
         ci_low = fit.ua_ci_low if fit.ua_ci_low is not None else -1.0
         if fit.confidence < 0.3 or ci_low <= 0 or ua > 2000:
-            return waiting(f"A first estimate exists but its confidence is only {fit.confidence:.0%}; PredHeat does not report a figure below 30%."
+            return waiting(f"A first estimate exists but its confidence is only {fit.confidence:.0%}; Heat Pump Pilot does not report a figure below 30%."
                            + (" " + "; ".join(fit.notes) if fit.notes else ""))
         cap = fit.capacity_kwh_per_k if math.isfinite(fit.capacity_kwh_per_k) and fit.capacity_kwh_per_k > 0 else None
         tau_h = cap * 1000.0 / ua if cap else None
@@ -621,7 +621,7 @@ class Platform:
 
     def _cost_backtest(self, s, runs, now: datetime) -> dict[str, Any]:
         """Predicted thermostat cost for elapsed slots against what the heating actually cost, using the
-        prices PredHeat had stored at the time. Scores the plan on what it knew then."""
+        prices Heat Pump Pilot had stored at the time. Scores the plan on what it knew then."""
         hp = counter_to_intervals([Measurement(signal=Signal.HP_ELEC_HEATING_KWH, ts=as_utc(r.ts), value=r.value, quality=Quality(r.quality),
                                                provenance=Provenance(r.provenance), source_ref=r.source_ref)
                                    for r in repo.measurements_for(s, self.property_id, Signal.HP_ELEC_HEATING_KWH.value,
@@ -792,7 +792,7 @@ class Platform:
         return rows
 
     def curve_entities(self) -> dict[str, dict[str, Any]]:
-        """The Vaillant number entities PredHeat may set on request, with their limits."""
+        """The Vaillant number entities Heat Pump Pilot may set on request, with their limits."""
         states = getattr(self.telemetry, "last_states", {}) or {}
         out: dict[str, dict[str, Any]] = {}
         for key, (_sig, hints, _max_change, label) in self.CURVE_SETTINGS.items():
@@ -844,7 +844,7 @@ class Platform:
                                 "before_after": self._curve_before_after(s, now)}
         if est.get("status") != "ok":
             return {**base, "status": "waiting",
-                    "reason": "The curve check uses your house's heat loss, which PredHeat is still learning (see Your house). It runs automatically once that figure is ready."}
+                    "reason": "The curve check uses your house's heat loss, which Heat Pump Pilot is still learning (see Your house). It runs automatically once that figure is ready."}
         start = now - timedelta(days=days)
         changes = self._curve_changes(s, now)
         while len(changes) >= 2 and changes[-1][1] == changes[-2][1] and abs(changes[-1][4] - changes[-2][3]) < 1e-6:
@@ -1194,8 +1194,8 @@ class Platform:
                 "scenario": {"ev_kwh_per_day": ev_kwh_per_day, "battery_kwh_per_day": battery_kwh_per_day},
                 "annual": annual, "live_rates": {k: v.get("product") for k, v in live.items() if v.get("product")},
                 "actual": actual, "reconciliation": reconciliation, "results": ranked + [r for r in results if not r.get("replayable")],
-                "caveats": ["Every tariff is priced on exactly the same half-hours: those for which PredHeat has your actual prices. Half-hours without a stored price are left out of both sides.",
-                            "Replay of your consumption as it happened. A tariff with different cheap windows would change when PredHeat heats, so the optimised figure would be lower still.",
+                "caveats": ["Every tariff is priced on exactly the same half-hours: those for which Heat Pump Pilot has your actual prices. Half-hours without a stored price are left out of both sides.",
+                            "Replay of your consumption as it happened. A tariff with different cheap windows would change when Heat Pump Pilot heats, so the optimised figure would be lower still.",
                             f"Other tariffs use indicative national rates unless you tick \"Use published rates for my region\"{' (your tariff code says region ' + region + (', ' + REGION_NAMES[region] if region in REGION_NAMES else '') + ')' if region else ''}.",
                             "Exit fees, eligibility (EV, smart meter) and export rates are not included."]}
 
@@ -1242,7 +1242,7 @@ class Platform:
         return s.query(m.WeatherForecast).filter_by(property_id=self.property_id, issued_at=latest_issue[0]).order_by(m.WeatherForecast.valid_at).all()
 
     def shadow_plan(self, s, now: datetime | None = None) -> dict[str, Any]:
-        """What PredHeat would do over the next 24 hours. Read-only.
+        """What Heat Pump Pilot would do over the next 24 hours. Read-only.
 
         Uses the model-based optimiser once the building model is identified with
         reasonable confidence; until then the rule-based plan, and says which.
@@ -1381,7 +1381,7 @@ class Platform:
                    "slope_per_degc": round(model.b, 3), "model_confidence": model.confidence, "notes": model.notes,
                    "model": model.as_dict()}
             if status != "ok":
-                out["reason"] = (f"PredHeat works out {label.lower()} efficiency from the electricity used and the heat delivered while the heat pump runs. "
+                out["reason"] = (f"Heat Pump Pilot works out {label.lower()} efficiency from the electricity used and the heat delivered while the heat pump runs. "
                                  f"It needs about a day of running. So far: {len(running)} running {'hour' if len(running) == 1 else 'hours'} over {days_seen} {'day' if days_seen == 1 else 'days'}.")
             if implausible:
                 out["reason"] = (f"The {label.lower()} heat and electricity figures do not add up yet (heat delivered is less than the electricity used), "
@@ -1404,7 +1404,7 @@ class Platform:
                 "confidence": heating["model_confidence"], "rmse": model.get("rmse"), "t_range": heating["outdoor_range_c"] or [None, None],
                 "capacity_kw": round(capacity, 1), "capacity_source": "observed 95th percentile" if len(half_hour_kw) >= 20 else ("rated output" if self.settings.heat_pump_rated_kw else "default 7 kW"),
                 "rated_kw": self.settings.heat_pump_rated_kw, "reason": heating.get("reason"),
-                "why_differs": "This is PredHeat's own calculation from the Vaillant sensors; the myVAILLANT app averages over a different period and may include hot water.",
+                "why_differs": "This is Heat Pump Pilot's own calculation from the Vaillant sensors; the myVAILLANT app averages over a different period and may include hot water.",
                 "window_start": start.isoformat(), "window_end": now.isoformat(), "notes": model.get("notes", []), "model": model}
 
     def _refresh_heat_pump_model(self, s, min_age: timedelta = timedelta(hours=6)) -> int | None:
@@ -1519,7 +1519,7 @@ class Platform:
         if st is not None:
             stamps += [t for t in (st.last_updated, st.last_reported) if t is not None]
         elif not live and self.seen_at.get(sig.value):
-            stamps.append(self.seen_at[sig.value])  # no Home Assistant states (simulator): PredHeat's own successful read
+            stamps.append(self.seen_at[sig.value])  # no Home Assistant states (simulator): Heat Pump Pilot's own successful read
         confirmed = max(stamps) if stamps else None
         age = (now - confirmed) if confirmed else None
         out = {"freshness": cls, "confirmed_at": confirmed.isoformat() if confirmed else None,

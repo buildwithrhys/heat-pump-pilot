@@ -12,7 +12,7 @@ Active control requires all of the following, checked at every action: the opera
 
 ## What may be controlled, and what may not
 
-Permitted targets once Phase 5 is authorised: zone room setpoint within the user's comfort band (via quick veto with a bounded duration or a time programme change), DHW setpoint within 40 to 60 degC and DHW boost, and nothing else without a further review. Never automatically: heating curve, minimum flow setpoint and outdoor cut-off (these three may be changed only on an explicit, confirmed request from the person, see "Heating curve settings" below). Never at all: system off, away mode, legionella settings, backup heater settings, or any manufacturer protection. The compressor and flow temperature are not directly controllable on this installation and PredHeat will not emulate that by rapid setpoint changes.
+Permitted targets once Phase 5 is authorised: zone room setpoint within the user's comfort band (via quick veto with a bounded duration or a time programme change), DHW setpoint within 40 to 60 degC and DHW boost, and nothing else without a further review. Never automatically: heating curve, minimum flow setpoint and outdoor cut-off (these three may be changed only on an explicit, confirmed request from the person, see "Heating curve settings" below). Never at all: system off, away mode, legionella settings, backup heater settings, or any manufacturer protection. The compressor and flow temperature are not directly controllable on this installation and Heat Pump Pilot will not emulate that by rapid setpoint changes.
 
 ## Comfort and equipment protection
 
@@ -20,11 +20,11 @@ User-defined comfort band enforced on every proposed slot. Minimum compressor ru
 
 ## Fail-safe behaviour
 
-If telemetry is stale, a control call fails, the optimiser stops responding, or the provider reports an error, PredHeat withdraws any active override (ends the quick veto) and leaves the manufacturer controls in charge. Manual override is immediate and persists until the user clears it. All proposed, blocked, executed, failed and reverted actions are appended to `control_execution_log` with reasons.
+If telemetry is stale, a control call fails, the optimiser stops responding, or the provider reports an error, Heat Pump Pilot withdraws any active override (ends the quick veto) and leaves the manufacturer controls in charge. Manual override is immediate and persists until the user clears it. All proposed, blocked, executed, failed and reverted actions are appended to `control_execution_log` with reasons.
 
 ## Conflict prevention
 
-Only one automation may own heating setpoints. While EnergyPLUS retains control, PredHeat remains in monitor or shadow mode. Predbat controls the battery, not the heat pump, and the EV is managed by Intelligent Octopus; PredHeat reads those systems and never writes to them. From 0.5.0 PredHeat reads Predbat's published plan entities (grid, battery, state of charge, rates) to price heating; it calls no Predbat service and changes no Predbat setting. From 0.6.0 PredHeat also publishes one sensor of its own, `sensor.predheat_heat_pump_plan`, through `HAControlAdapter.publish_state`, which refuses any entity not named `sensor.predheat_*`. The sensor is information only: Predbat reads it only if the person adds it to Predbat's `load_forecast`, and it carries extra load only while PredHeat is actually controlling the heating.
+Only one automation may own heating setpoints. While EnergyPLUS retains control, Heat Pump Pilot remains in monitor or shadow mode. Predbat controls the battery, not the heat pump, and the EV is managed by Intelligent Octopus; Heat Pump Pilot reads those systems and never writes to them. From 0.5.0 Heat Pump Pilot reads Predbat's published plan entities (grid, battery, state of charge, rates) to price heating; it calls no Predbat service and changes no Predbat setting. From 0.6.0 Heat Pump Pilot also publishes one sensor of its own, `sensor.predheat_heat_pump_plan`, through `HAControlAdapter.publish_state`, which refuses any entity not named `sensor.predheat_*`. The sensor is information only: Predbat reads it only if the person adds it to Predbat's `load_forecast`, and it carries extra load only while Heat Pump Pilot is actually controlling the heating.
 
 ## Credentials
 
@@ -41,8 +41,8 @@ The only write path is `predheat.integrations.homeassistant.control.HAControlAda
 
 The heating curve check on the Overview suggests values for three Vaillant settings: heating curve, minimum flow temperature and heat demand limit (outdoor cut-off). A person can apply a suggestion from the page. This is a one-off write the person asks for, the same as changing the setting in the myVAILLANT app, and is not part of automatic control:
 
-- It is triggered only by `POST /api/heating-curve/apply` or `/undo`, which the dashboard calls only after a confirmation dialog naming the entity, the current value and the new value. Nothing in the optimiser, controller or collection loop calls them, and PredHeat never changes these settings by itself.
+- It is triggered only by `POST /api/heating-curve/apply` or `/undo`, which the dashboard calls only after a confirmation dialog naming the entity, the current value and the new value. Nothing in the optimiser, controller or collection loop calls them, and Heat Pump Pilot never changes these settings by itself.
 - The write goes through `HAControlAdapter.set_number` in `control.py`, which calls `number.set_value` and refuses any entity outside the `number` domain. Only entities matching the three settings are offered.
 - Each value is rounded to the entity's own step and must lie within the entity's own min and max. One request may move the heating curve by at most 0.5, minimum flow by at most 10 °C and the cut-off by at most 6 °C.
 - Every change and undo is appended to `control_execution_log` (action `number.set_value`) with the previous value, and the page offers Undo back to that value.
-- It does not depend on the Allow control toggle, because it is a single change the person asks for and confirms, not PredHeat acting on its own.
+- It does not depend on the Allow control toggle, because it is a single change the person asks for and confirms, not Heat Pump Pilot acting on its own.

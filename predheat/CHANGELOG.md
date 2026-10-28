@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0
+
+- **PredHeat is now called Heat Pump Pilot.** Predbat has its own built-in feature called Predheat, and now that the two work together the shared name was confusing. Only the name you see changes: the add-on store listing, the sidebar, the dashboard and the docs. Your settings, learned data and history are untouched. The add-on's internal ID stays `predheat`, and the sensor Predbat reads stays `sensor.predheat_heat_pump_plan` (its display name is now "Heat Pump Pilot plan"), so nothing in your Predbat apps.yaml needs changing. Entries below this one use the old name.
+
 ## 0.7.0
 
 - **The standing charge is never pro-rated.** The Overview's "Today so far" row showed a share of the daily standing charge that grew through the day (£0.32 at 14:12), which looked like a running cost. That card is gone, and nothing in that row includes the standing charge. Wherever a whole-house cost is shown (whole home import on Energy costs) the standing charge appears once, as "Standing charge (fixed, per day)", at the full daily rate from the Octopus integration times the number of days. The tariff comparison now also charges whole days rather than a fraction of a day.

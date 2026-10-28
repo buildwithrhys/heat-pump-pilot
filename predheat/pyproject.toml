@@ -1,7 +1,7 @@
 [project]
 name = "predheat"
-version = "0.7.0"
-description = "PredHeat: self-learning heat pump and home energy optimiser (Home Assistant proof of concept)"
+version = "0.8.0"
+description = "Heat Pump Pilot: self-learning heat pump and home energy optimiser (Home Assistant proof of concept)"
 readme = "DOCS.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }

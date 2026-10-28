@@ -3,7 +3,7 @@ import { announceMode, api, MODE_LABEL, type ClimateEntity, type Preconditions, 
 
 type Val = number | string | boolean | null;
 const GROUPS: { key: "control" | "comparisons" | "advanced"; title: string; blurb: string }[] = [
-  { key: "control", title: "Control", blurb: "Whether PredHeat may act, on what, and how far." },
+  { key: "control", title: "Control", blurb: "Whether Heat Pump Pilot may act, on what, and how far." },
   { key: "comparisons", title: "Comparisons", blurb: "Figures used for the gas comparison and the survey check on the Overview." },
   { key: "advanced", title: "Advanced", blurb: "Rarely needed; the defaults suit most homes." },
 ];
@@ -103,7 +103,7 @@ export default function SettingsPage() {
             <option value="">{list.length ? (isDhw ? "None (hot water not controlled)" : "Choose a heating zone") : (isDhw ? "No water heater entities found yet" : "No climate entities found yet")}</option>
             {list.map((e) => <option key={e.entity_id} value={e.entity_id}>{e.name}{e.platform === "mypyllant" ? " (myVAILLANT)" : ""} · {e.entity_id}</option>)}
           </select>
-          <div className="sub" style={{ marginTop: 8 }}>{f.help}{list.length === 0 ? " PredHeat lists the entities it finds in Home Assistant after its first collection." : ""}</div>
+          <div className="sub" style={{ marginTop: 8 }}>{f.help}{list.length === 0 ? " Heat Pump Pilot lists the entities it finds in Home Assistant after its first collection." : ""}</div>
         </div>
       );
     }
@@ -172,8 +172,8 @@ export default function SettingsPage() {
       {dialog && (
         <div className="modal-backdrop" onClick={() => setDialog(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-            <h2 style={{ fontSize: 18, textTransform: "none", letterSpacing: 0 }}>Allow PredHeat to control the heating?</h2>
-            <p style={{ fontSize: 14 }}>PredHeat will move your room setpoint by up to {dialog.max_offset_c} °C (1.5 times that in Max savings, capped at 2 °C) when the operating mode is Balanced or Max savings. These are the preconditions and whether each is met now:</p>
+            <h2 style={{ fontSize: 18, textTransform: "none", letterSpacing: 0 }}>Allow Heat Pump Pilot to control the heating?</h2>
+            <p style={{ fontSize: 14 }}>Heat Pump Pilot will move your room setpoint by up to {dialog.max_offset_c} °C (1.5 times that in Max savings, capped at 2 °C) when the operating mode is Balanced or Max savings. These are the preconditions and whether each is met now:</p>
             <ul style={{ listStyle: "none", padding: 0, margin: "0 0 12px" }}>
               {dialog.checks.map((c) => (
                 <li key={c.key} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "6px 0", borderBottom: "1px solid var(--line)" }}>
@@ -185,7 +185,7 @@ export default function SettingsPage() {
             {!dialog.all_met && (
               <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 14, marginBottom: 12 }}>
                 <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} style={{ marginTop: 3 }} />
-                <span>I understand PredHeat may move my room setpoint by up to {dialog.max_offset_c} °C even though not every precondition is met.</span>
+                <span>I understand Heat Pump Pilot may move my room setpoint by up to {dialog.max_offset_c} °C even though not every precondition is met.</span>
               </label>
             )}
             <div className="row" style={{ justifyContent: "flex-end", marginBottom: 0 }}>

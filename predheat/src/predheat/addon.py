@@ -91,7 +91,7 @@ def main() -> None:
     logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     log = logging.getLogger("predheat.addon")
     log.info(
-        "PredHeat add-on starting: data_mode=%s operating_mode=%s supervisor=%s data_dir=%s",
+        "Heat Pump Pilot add-on starting: data_mode=%s operating_mode=%s supervisor=%s data_dir=%s",
         env.get("PREDHEAT_DATA_MODE", "simulated"),
         env.get("PREDHEAT_OPERATING_MODE", "monitor"),
         "yes" if "SUPERVISOR_TOKEN" in os.environ else "no",

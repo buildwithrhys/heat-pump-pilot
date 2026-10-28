@@ -63,7 +63,7 @@ def create_app(settings: Settings | None = None, platform: Platform | None = Non
             except Exception as exc:  # noqa: BLE001
                 log.warning("release on shutdown failed: %s", exc)
 
-    app = FastAPI(title="PredHeat", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="Heat Pump Pilot", version=__version__, lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET"], allow_headers=["*"])
 
     def plat() -> Platform:
@@ -340,7 +340,7 @@ def create_app(settings: Settings | None = None, platform: Platform | None = Non
 
     @app.get("/api/control-status")
     async def control_status():
-        """Whether PredHeat is allowed to act, and what it last did. Read-only."""
+        """Whether Heat Pump Pilot is allowed to act, and what it last did. Read-only."""
         return plat().control_status()
 
     @app.api_route("/api/control/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])

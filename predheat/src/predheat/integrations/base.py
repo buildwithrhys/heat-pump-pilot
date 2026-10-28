@@ -56,7 +56,7 @@ class TariffProvider(Protocol):
         """Historic rates where the source can supply them (direct APIs, simulator).
 
         The Home Assistant Octopus integration only publishes three days, so its
-        provider returns an empty list and PredHeat relies on its own retained history.
+        provider returns an empty list and Heat Pump Pilot relies on its own retained history.
         """
         ...
 

@@ -79,7 +79,7 @@ def analyse_curve(hours: list[HourRow], ua_w_per_k: float, internal_gain_kw: flo
     running = [h for h in usable if h.heat_kwh >= 1.0 and h.flow is not None]
     if len(running) < 12:
         return {"status": "waiting", "running_hours": len(running),
-                "reason": "PredHeat checks the curve from hours when the heat pump is heating the house steadily. "
+                "reason": "Heat Pump Pilot checks the curve from hours when the heat pump is heating the house steadily. "
                           f"It needs about 12 such hours; so far it has {len(running)}. Expect a result after a day or two of heating."}
     have_return = any(h.ret is not None for h in running)
 

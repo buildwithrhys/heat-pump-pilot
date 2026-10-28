@@ -1,12 +1,12 @@
 # Integrations
 
-What each integration exposes on the pilot installation (live inventory of 25 October 2026, Home Assistant 2026.10.4), what PredHeat uses, and the limits. The full entity list for Vaillant is in `docs/phase0-capability-report.md`.
+What each integration exposes on the pilot installation (live inventory of 25 October 2026, Home Assistant 2026.10.4), what Heat Pump Pilot uses, and the limits. The full entity list for Vaillant is in `docs/phase0-capability-report.md`.
 
 ## Vaillant via mypyllant (Home Assistant custom integration)
 
 Pilot hardware: aroTHERM pro (device 1), VWZ AI hydraulic unit with backup heater (device 0), VRC720 controller, VR 940f gateway, firmware 404.1.29, one heating circuit (direct), one zone, one DHW cylinder with circulation pump. 58 entities.
 
-| PredHeat signal | Entity suffix | Quality | Notes |
+| Heat Pump Pilot signal | Entity suffix | Quality | Notes |
 |---|---|---|---|
 | indoor_temperature | `zone_1_circuit_0_current_temperature` | sensor | Single zone sensor (room stat). Humidity also available. |
 | indoor_setpoint | `zone_1_circuit_0_desired_heating_temperature` | sensor | Manual mode setpoint 23 degC at discovery; time programme setpoint 29 degC looks like a placeholder and is worth checking in the app. |
@@ -27,7 +27,7 @@ Pilot hardware: aroTHERM pro (device 1), VWZ AI hydraulic unit with backup heate
 
 Derived locally by the integration: `heating_energy_efficiency` (4.4 home, 4.5 device) is heat generated divided by electricity consumed from daily totals, so it is a ratio of manufacturer estimates, not a measured COP.
 
-Writable controls visible (never used by PredHeat in Phases 0 to 4): climate zone target (quick veto or time programme, 7 to 35 degC, 0.5 step, presets boost, away, system off, ventilation boost), water heater (35 to 70 degC, Manual, Time Controlled, Off, Cylinder Boost), DHW boost switch, heating curve 0.1 to 5, min flow setpoint, heat demand limit, away mode. No flow temperature write, no compressor or power limit command.
+Writable controls visible (never used by Heat Pump Pilot in Phases 0 to 4): climate zone target (quick veto or time programme, 7 to 35 degC, 0.5 step, presets boost, away, system off, ventilation boost), water heater (35 to 70 degC, Manual, Time Controlled, Off, Cylinder Boost), DHW boost switch, heating curve 0.1 to 5, min flow setpoint, heat demand limit, away mode. No flow temperature write, no compressor or power limit command.
 
 Energy management: `energy_manager_state` is HEATING; firmware reports `external_energy_management_activation: false`; no EEBUS entities exist on this system (gateway is VR 940f). EnergyPLUS therefore appears to act cloud-side through Vaillant's own scheduling rather than through a local EEBUS energy manager. Treat it as a competing controller until proven otherwise; see `SAFETY.md`.
 
@@ -39,17 +39,17 @@ Account on Intelligent Octopus Go, import tariff `E-1R-INTELLI-VAR-24-10-29-K` (
 
 Used: `current_rate` and the `previous/current/next_day_rates` events (half-hour slots including `is_intelligent_adjusted`; 50 slots on 25 October 2026), `current_standing_charge`, `previous_accumulative_consumption` with 48 half-hour `charges` (last complete day, published late), `intelligent_dispatching` on the Hypervolt device with `planned_dispatches` (start, end, charge_in_kwh, source SMART), `completed_dispatches` (30-minute pieces with location AT_HOME, retained about 3 days) and `started_dispatches`. The Ohme device shows as a second, unavailable intelligent device and is ignored.
 
-Rules: PredHeat prices consumption at the slot rate from the rates events. A slot in the fixed 23:30 to 05:30 window is guaranteed off-peak. A slot inside a started or completed dispatch is confirmed off-peak. A slot inside a planned dispatch only is reported as planned and assumed; it is never counted as a realised saving. The integration's own `is_intelligent_adjusted` flag is retained as corroboration.
+Rules: Heat Pump Pilot prices consumption at the slot rate from the rates events. A slot in the fixed 23:30 to 05:30 window is guaranteed off-peak. A slot inside a started or completed dispatch is confirmed off-peak. A slot inside a planned dispatch only is reported as planned and assumed; it is never counted as a realised saving. The integration's own `is_intelligent_adjusted` flag is retained as corroboration.
 
 Limits: shared 100 calls per hour across all tools, consumption published with a lag of up to a day or more, no public API terms, commercial third-party access is a partner OAuth arrangement. Historic rates for alternative products need the direct REST API (Milestone 1.2).
 
 ## OpenWeatherMap (core integration)
 
-`weather.weather_forecast` with hourly forecasts for 48 hours (temperature, apparent temperature, dew point, humidity, cloud cover, wind speed and gust in mph, precipitation probability, condition) and daily for 8 days, via the `weather.get_forecasts` service. Current conditions as sensors. The `openweathermap_forecast_*` sensors are legacy and unavailable. PredHeat stores each forecast with its issue time. Wind speed is converted to m/s. Irradiance is not provided; cloud cover is a proxy only.
+`weather.weather_forecast` with hourly forecasts for 48 hours (temperature, apparent temperature, dew point, humidity, cloud cover, wind speed and gust in mph, precipitation probability, condition) and daily for 8 days, via the `weather.get_forecasts` service. Current conditions as sensors. The `openweathermap_forecast_*` sensors are legacy and unavailable. Heat Pump Pilot stores each forecast with its issue time. Wind speed is converted to m/s. Irradiance is not provided; cloud cover is a proxy only.
 
 ## Solcast (HACS integration)
 
-One site: 10 kW AC, 8 kW DC, azimuth 114 degrees (ESE), tilt 35, loss factor 0.95. `forecast_today`, `tomorrow` and `day_3` to `day_7` carry `detailedForecast` with 30-minute `pv_estimate`, `pv_estimate10`, `pv_estimate90` in kW. API limit on this account is 50 calls per day (hobbyist default is 10). No GHI or GTI irradiance on the rooftop endpoints. For passive solar gain PredHeat will use Open-Meteo irradiance (free non-commercial, licensable) and keep Solcast for PV generation.
+One site: 10 kW AC, 8 kW DC, azimuth 114 degrees (ESE), tilt 35, loss factor 0.95. `forecast_today`, `tomorrow` and `day_3` to `day_7` carry `detailedForecast` with 30-minute `pv_estimate`, `pv_estimate10`, `pv_estimate90` in kW. API limit on this account is 50 calls per day (hobbyist default is 10). No GHI or GTI irradiance on the rooftop endpoints. For passive solar gain Heat Pump Pilot will use Open-Meteo irradiance (free non-commercial, licensable) and keep Solcast for PV generation.
 
 ## Huawei Solar (HACS integration, Modbus)
 

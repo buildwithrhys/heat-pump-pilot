@@ -2,7 +2,7 @@
 
 The products and rates endpoints are public, so no key is needed for the
 tariff comparison or Agile history. Consumption needs a key and the meter
-identifiers; PredHeat reads consumption through Home Assistant instead.
+identifiers; Heat Pump Pilot reads consumption through Home Assistant instead.
 """
 
 from __future__ import annotations

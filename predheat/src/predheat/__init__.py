@@ -1,4 +1,4 @@
-"""PredHeat: self-learning heat pump and home energy optimiser.
+"""Heat Pump Pilot: self-learning heat pump and home energy optimiser.
 
 The package is organised so that the modelling, pricing and optimisation code
 never imports Home Assistant specifics. Integrations live under
@@ -6,4 +6,4 @@ never imports Home Assistant specifics. Integrations live under
 signals defined in ``predheat.domain``.
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"

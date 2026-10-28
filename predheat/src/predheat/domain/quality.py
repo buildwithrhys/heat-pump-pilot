@@ -1,6 +1,6 @@
 """Measurement quality and provenance.
 
-Every number PredHeat stores or displays carries a quality classification so
+Every number Heat Pump Pilot stores or displays carries a quality classification so
 that measured, estimated, modelled and forecast values are never confused.
 """
 
@@ -23,7 +23,7 @@ class Quality(StrEnum):
     """A direct physical sensor reading (temperature, pressure, humidity)."""
 
     MODEL_DERIVED = "model_derived"
-    """Calculated by PredHeat from other measurements plus a model or allocation rule."""
+    """Calculated by Heat Pump Pilot from other measurements plus a model or allocation rule."""
 
     FORECAST = "forecast"
     """A prediction about the future, issued at a specific time."""

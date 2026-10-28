@@ -9,7 +9,7 @@ function url(path: string): string {
 }
 
 // The script file this page is running. The server names the current one on every API response;
-// if they differ, PredHeat was updated while this page stayed open, and App offers a reload.
+// if they differ, Heat Pump Pilot was updated while this page stayed open, and App offers a reload.
 const OWN_BUNDLE = (() => { try { return new URL(import.meta.url).pathname.split("/").pop() ?? ""; } catch { return ""; } })();
 function checkFresh(r: Response) {
   const current = r.headers.get("X-PredHeat-Bundle");

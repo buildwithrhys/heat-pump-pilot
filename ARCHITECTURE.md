@@ -2,7 +2,7 @@
 
 ## Goals that shape the design
 
-PredHeat must be portable (the engine cannot depend on Home Assistant), honest (measured, estimated, modelled and forecast values never mix), safe (read-only until control ownership is proven) and reproducible (costs never change when a rate card is updated). The architecture is therefore layered around a canonical domain model with integrations at the edge, and every stored number carries a quality and a provenance.
+Heat Pump Pilot must be portable (the engine cannot depend on Home Assistant), honest (measured, estimated, modelled and forecast values never mix), safe (read-only until control ownership is proven) and reproducible (costs never change when a rate card is updated). The architecture is therefore layered around a canonical domain model with integrations at the edge, and every stored number carries a quality and a provenance.
 
 ## Components
 
@@ -44,4 +44,4 @@ The simulator is part of the product, not just a test aid. It lets tariff replay
 
 ## Non-functional notes
 
-Secrets come only from environment variables. The API has no write endpoints and binds to localhost. Polling intervals default to five minutes for Home Assistant, which is itself rate limited against Vaillant and Octopus; PredHeat never calls those services directly in this phase. Every provider failure becomes a data quality event visible on System Health. Timestamps are UTC in storage and rendered in the property's timezone.
+Secrets come only from environment variables. The API has no write endpoints and binds to localhost. Polling intervals default to five minutes for Home Assistant, which is itself rate limited against Vaillant and Octopus; Heat Pump Pilot never calls those services directly in this phase. Every provider failure becomes a data quality event visible on System Health. Timestamps are UTC in storage and rendered in the property's timezone.
