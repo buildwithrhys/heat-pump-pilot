@@ -556,11 +556,11 @@ class Platform:
                 "heating_hours": round(heat_on_hours, 1), "rated_kw": self.settings.heat_pump_rated_kw}
 
         def waiting(_detail: str = "") -> dict[str, Any]:
-            so_far = f"So far: {days_with_data} {'day' if days_with_data == 1 else 'days'}"
+            so_far = f"So far: {days_with_data} {'day' if days_with_data == 1 else 'days'} of data"
             if outdoor_seen:
                 so_far += f", outdoor temperatures {min(outdoor_seen):.0f} to {max(outdoor_seen):.0f} °C"
             reason = ("Heat Pump Pilot works out your home's heat loss from how fast it cools between heating cycles. "
-                      "It needs about 7 days with the heating running and some colder nights. " + so_far + ".")
+                      "It needs about 7 cold days to measure heat loss accurately. " + so_far + ".")
             return {**base, "status": "waiting", "reason": reason}
 
         if usable < 48:

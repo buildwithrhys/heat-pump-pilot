@@ -29,7 +29,7 @@ from ...domain import (
 )
 from ..base import ProviderHealth
 from .client import HAClient, HAState
-from .discovery import discover_capabilities, propose_mappings
+from .discovery import discover_capabilities, manual_candidates
 
 
 @dataclass
@@ -115,8 +115,7 @@ class HATelemetryProvider:
         entries = await self.client.config_entries()
         report = discover_capabilities(states, entries)
         self.last_states = {s.entity_id: s for s in states}
-        self.last_candidates = {sig.value: [(st.entity_id, round(sc, 2), note) for st, sc, note in cands[:6]]
-                                for sig, cands in propose_mappings(states).items()}
+        self.last_candidates = {sig.value: rows for sig, rows in manual_candidates(states).items()}
         report = apply_overrides(report, self.overrides or {}, self.last_states)
         self.mapping = mapping_from_report(report)
         return report
@@ -374,17 +373,54 @@ class HAOctopusTariffProvider:
 # Weather and solar via HA
 
 
-class HAWeatherProvider:
-    name = "openweather_via_home_assistant"
+# weather entity supported_features bits (WeatherEntityFeature)
+_FORECAST_HOURLY = 2
 
-    def __init__(self, client: HAClient, entity_id: str = "weather.weather_forecast"):
+
+def pick_weather_entity(states: list[HAState], preferred: str | None = None) -> str | None:
+    """The weather entity to read forecasts from.
+
+    *preferred* wins if it exists. Otherwise a live ``weather.*`` entity that offers hourly
+    forecasts, the pilot's ``weather.weather_forecast`` first, then by name for a stable choice.
+    """
+    weather = [s for s in states if s.domain == "weather" and not s.disabled]
+    if preferred and any(s.entity_id == preferred for s in weather):
+        return preferred
+
+    def rank(s: HAState) -> tuple:
+        hourly = bool(int(s.attributes.get("supported_features") or 0) & _FORECAST_HOURLY)
+        return (not s.is_live, not hourly, s.entity_id != "weather.weather_forecast", s.entity_id)
+
+    weather.sort(key=rank)
+    return weather[0].entity_id if weather else None
+
+
+class HAWeatherProvider:
+    name = "weather_via_home_assistant"
+
+    def __init__(self, client: HAClient, entity_id: str | None = None):
         self.client = client
-        self.entity_id = entity_id
+        self.preferred = entity_id  # None: pick automatically
+        self.entity_id: str | None = entity_id
         self._last_ok: datetime | None = None
+        self._last_error: str | None = None
+
+    async def _resolve(self) -> str:
+        self.entity_id = pick_weather_entity(await self.client.states(), self.preferred)
+        if not self.entity_id:
+            self._last_error = ("No weather entity found in Home Assistant. Add a weather integration "
+                                "with hourly forecasts (for example Met.no or OpenWeatherMap).")
+            raise RuntimeError(self._last_error)
+        return self.entity_id
 
     async def forecast(self, hours: int = 48) -> list[WeatherPoint]:
         now = datetime.now(tz=timezone.utc)
-        rows = await self.client.weather_forecast(self.entity_id, "hourly")
+        entity_id = await self._resolve()
+        try:
+            rows = await self.client.weather_forecast(entity_id, "hourly")
+        except Exception as exc:
+            self._last_error = f"{entity_id} gave no hourly forecast: {exc}"
+            raise RuntimeError(self._last_error) from exc
         out = []
         for r in rows[:hours]:
             out.append(WeatherPoint(
@@ -393,12 +429,13 @@ class HAWeatherProvider:
                 humidity_pct=r.get("humidity"), cloud_cover_pct=r.get("cloud_coverage"),
                 condition=r.get("condition"), provenance=Provenance.OPENWEATHER_HA))
         self._last_ok = now
+        self._last_error = None
         return out
 
     async def observation(self) -> WeatherPoint | None:
         now = datetime.now(tz=timezone.utc)
         states = {s.entity_id: s for s in await self.client.states()}
-        w = states.get(self.entity_id)
+        w = states.get(self.entity_id or pick_weather_entity(list(states.values()), self.preferred) or "")
         if not w or not w.is_live:
             return None
         a = w.attributes
@@ -408,7 +445,8 @@ class HAWeatherProvider:
                             condition=w.state, quality=Quality.SENSOR, provenance=Provenance.OPENWEATHER_HA)
 
     async def health(self) -> ProviderHealth:
-        return ProviderHealth(self.name, True, self._last_ok)
+        return ProviderHealth(self.name, self._last_error is None, self._last_ok, self._last_error,
+                              details={"entity_id": self.entity_id})
 
 
 def _wind_ms(v: Any, unit: str | None) -> float | None:

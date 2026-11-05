@@ -38,6 +38,27 @@ _EXCLUDE_SUBSTRINGS = ("forecast_", "model_y_", "tesla_", "inverter_internal", "
 _DUPLICATE_SUFFIX = re.compile(r"_\d$")
 
 
+def compatible(state: HAState, spec: SignalSpec) -> bool:
+    """Could *state* carry *spec* at all, whatever its name? (domain, kind and unit only)
+
+    Used to offer every plausible entity for manual mapping, so a name discovery does not
+    recognise can still be chosen by hand.
+    """
+    if state.disabled or state.domain not in spec.domains:
+        return False
+    is_energy_counter = state.device_class == "energy" or (state.unit or "") in ("Wh", "kWh", "MWh")
+    if spec.kind != SignalKind.CUMULATIVE and is_energy_counter:
+        return False
+    if spec.kind == SignalKind.CUMULATIVE and state.domain == "sensor" and not is_energy_counter and spec.unit == "kWh":
+        return False
+    if spec.unit_scale and state.unit not in spec.unit_scale:
+        return False
+    if spec.device_class and state.device_class != spec.device_class and not spec.unit_scale:
+        # no unit to go on: the device class is the only evidence this is the right kind of reading
+        return False
+    return True
+
+
 def _score(state: HAState, spec: SignalSpec) -> tuple[float, str]:
     """Return (confidence 0..1, note) for mapping *state* to *spec*."""
     eid = state.entity_id.lower()
@@ -58,7 +79,8 @@ def _score(state: HAState, spec: SignalSpec) -> tuple[float, str]:
         return 0.0, "not an energy counter"
     score = 0.0
     note = ""
-    for rank, hint in enumerate(spec.hints):
+    hints = list(spec.hints) + list(spec.platform_hints.get(state.platform or "", ()))
+    for rank, hint in enumerate(hints):
         if hint in eid:
             score = 1.0 - rank * 0.12  # earlier (more specific) hints score higher
             note = f"matched hint '{hint}'"
@@ -95,6 +117,21 @@ def propose_mappings(states: Iterable[HAState]) -> dict[Signal, list[tuple[HASta
                 cands.append((s, sc, note))
         cands.sort(key=lambda c: c[1], reverse=True)
         out[signal] = cands
+    return out
+
+
+def manual_candidates(states: Iterable[HAState], limit: int = 6, max_others: int = 300) -> dict[Signal, list[tuple[str, float, str]]]:
+    """Choices for the mapping dropdown: discovery's ranked matches first, then every other
+    entity whose type and unit fit, so the user is never left with an empty list."""
+    states = list(states)
+    ranked = propose_mappings(states)
+    out: dict[Signal, list[tuple[str, float, str]]] = {}
+    for signal, spec in SIGNAL_CATALOGUE.items():
+        rows = [(st.entity_id, round(sc, 2), note) for st, sc, note in ranked[signal][:limit]]
+        seen = {r[0] for r in rows}
+        rest = sorted(st.entity_id for st in states if st.entity_id not in seen and compatible(st, spec))
+        rows += [(eid, 0.0, "") for eid in rest[:max_others]]
+        out[signal] = rows
     return out
 
 
@@ -193,7 +230,7 @@ def discover_capabilities(
     ems = next((s for s in states if s.entity_id.endswith("energy_manager_state")), None)
     if ems:
         warnings.append(
-            f"Vaillant energy manager state is '{ems.state}'. Treat EnergyPLUS/EEBUS as a potential competing controller; Heat Pump Pilot stays read-only."
+            f"Vaillant energy manager state is '{ems.state}'. If EnergyPLUS or EEBUS is switched on, it could act as a competing controller. Heat Pump Pilot stays read-only."
         )
 
     return CapabilityReport(
