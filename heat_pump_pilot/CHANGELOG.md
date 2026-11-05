@@ -4,6 +4,7 @@
 
 - **Vaillant heat pumps other than the aroTHERM Pro are now recognised.** Discovery looked for entity names containing `arotherm_pro`, so on an aroTHERM plus (and other models) the energy counters were never found and thermal modelling could not start ("missing hp_elec_heating_kwh, hp_heat_heating_kwh"). It now matches the reading itself (`consumed_electrical_energy_heating`, `heat_generated_heating` and so on) on any myVAILLANT device, and still ignores the indoor unit's backup heater counters.
 - **The Change dropdown on System health is never empty.** It used to list only entities discovery recognised by name, so an unrecognised sensor could not be chosen by hand. It now also lists every entity that gives the right type of reading in a usable unit, marked "right type of reading, name not recognised".
+- **Weather forecasts work whatever your weather entity is called.** The add-on asked Home Assistant for `weather.weather_forecast` only, so with any other name (`weather.openweathermap`, Met.no's `weather.forecast_home`) every collection logged "Service call requested response data but did not match any entities" and the Forecast tab had no weather. It now uses a weather entity that offers hourly forecasts, and System health says which one, or that none was found.
 - The Vaillant energy manager note on System health no longer reads as if EnergyPLUS or EEBUS had been found. It shows for every myVAILLANT install, and now says "if EnergyPLUS or EEBUS is switched on".
 
 ## 0.9.1

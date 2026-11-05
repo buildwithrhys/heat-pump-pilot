@@ -138,7 +138,7 @@ export default function SystemPage() {
         <div className="tablewrap"><table>
           <thead><tr><th>Provider</th><th>Status</th><th>Last success</th><th>Error</th></tr></thead>
           <tbody>{s.providers.map((p) => (
-            <tr key={p.name}><td>{p.name}</td><td><span className={`tag ${p.ok ? "measured" : "bad"}`}>{p.ok ? "ok" : "failed"}</span></td><td>{p.last_success_at ? new Date(p.last_success_at).toLocaleString("en-GB") : "–"}</td><td className="muted">{p.last_error ?? ""}</td></tr>
+            <tr key={p.name}><td>{p.name}{p.details?.entity_id ? <div className="muted" style={{ fontSize: 12 }}>reading {p.details.entity_id}</div> : null}</td><td><span className={`tag ${p.ok ? "measured" : "bad"}`}>{p.ok ? "ok" : "failed"}</span></td><td>{p.last_success_at ? new Date(p.last_success_at).toLocaleString("en-GB") : "–"}</td><td className="muted">{p.last_error ?? ""}</td></tr>
           ))}</tbody>
         </table></div>
       </div>
