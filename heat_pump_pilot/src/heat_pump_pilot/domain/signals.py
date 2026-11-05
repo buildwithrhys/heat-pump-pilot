@@ -116,11 +116,18 @@ class SignalSpec:
     # Every substring in ``require`` must appear in the entity id; any in ``exclude`` rejects it.
     require: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
+    # Hints that only count for entities from one integration, for names too generic to trust
+    # elsewhere (myVAILLANT's "<device>_current_power"). Scored below the plain hints.
+    platform_hints: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 _W_TO_KW = {"W": 0.001, "kW": 1.0}
 _WH_TO_KWH = {"Wh": 0.001, "kWh": 1.0, "MWh": 1000.0}
 _RATE = {"GBP/kWh": 100.0, "p/kWh": 1.0, "£/kWh": 100.0}
+# myVAILLANT names entities "<home>_device_<n>_<product>_<reading>", and the product differs by model
+# (arotherm_pro, arotherm_plus, arotherm_split ...). Heat pump signals therefore match on the reading
+# and exclude the indoor unit, whose counters cover the backup heater rather than the heat pump.
+_NOT_OUTDOOR_UNIT = ("vwz", "unitower", "hydraulic_station", "backup_heater", "immersion")
 
 SIGNAL_CATALOGUE: dict[Signal, SignalSpec] = {
     s.signal: s
@@ -159,7 +166,8 @@ SIGNAL_CATALOGUE: dict[Signal, SignalSpec] = {
         SignalSpec(Signal.HP_ELECTRICAL_POWER, "kW", SignalKind.INSTANT,
                    "Heat pump outdoor unit electrical power", default_quality=Quality.MANUFACTURER_ESTIMATED,
                    hints=("arotherm_pro_current_power", "heat_pump_current_power", "hp_power"),
-                   device_class="power", unit_scale=_W_TO_KW),
+                   device_class="power", unit_scale=_W_TO_KW, exclude=_NOT_OUTDOOR_UNIT,
+                   platform_hints={"mypyllant": ("_current_power",)}),
         SignalSpec(Signal.AUX_ELECTRICAL_POWER, "kW", SignalKind.INSTANT,
                    "Indoor unit / backup heater electrical power", default_quality=Quality.MANUFACTURER_ESTIMATED,
                    hints=("vwz_ai_current_power", "backup_heater_power", "immersion_power"),
@@ -172,33 +180,33 @@ SIGNAL_CATALOGUE: dict[Signal, SignalSpec] = {
         SignalSpec(Signal.HP_DEFROST_ACTIVE, "bool", SignalKind.STATE, "Defrost in progress",
                    default_quality=Quality.UNAVAILABLE, hints=("defrost",), domains=("binary_sensor",)),
         SignalSpec(Signal.HP_ON_OFF_CYCLES, "count", SignalKind.CUMULATIVE, "Compressor on/off cycles",
-                   default_quality=Quality.MANUFACTURER_ESTIMATED, hints=("arotherm_pro_on_off_cycles", "on_off_cycles")),
+                   default_quality=Quality.MANUFACTURER_ESTIMATED, hints=("arotherm_pro_on_off_cycles", "on_off_cycles"), exclude=_NOT_OUTDOOR_UNIT),
         SignalSpec(Signal.HP_OPERATION_HOURS, "h", SignalKind.CUMULATIVE, "Compressor operating hours",
-                   default_quality=Quality.MANUFACTURER_ESTIMATED, hints=("arotherm_pro_operation_time", "operation_time")),
+                   default_quality=Quality.MANUFACTURER_ESTIMATED, hints=("arotherm_pro_operation_time", "operation_time"), exclude=_NOT_OUTDOOR_UNIT),
         SignalSpec(Signal.HP_ELEC_HEATING_KWH, "kWh", SignalKind.CUMULATIVE,
                    "Electricity consumed for space heating", default_quality=Quality.MANUFACTURER_ESTIMATED,
                    required_for_thermal_model=True,
-                   hints=("arotherm_pro_consumed_electrical_energy_heating",), device_class="energy",
+                   hints=("arotherm_pro_consumed_electrical_energy_heating", "consumed_electrical_energy_heating"), exclude=_NOT_OUTDOOR_UNIT, device_class="energy",
                    unit_scale=_WH_TO_KWH),
         SignalSpec(Signal.HP_ELEC_DHW_KWH, "kWh", SignalKind.CUMULATIVE,
                    "Electricity consumed for hot water", default_quality=Quality.MANUFACTURER_ESTIMATED,
-                   hints=("arotherm_pro_consumed_electrical_energy_domestic_hot_water",), device_class="energy",
+                   hints=("arotherm_pro_consumed_electrical_energy_domestic_hot_water", "consumed_electrical_energy_domestic_hot_water"), exclude=_NOT_OUTDOOR_UNIT, device_class="energy",
                    unit_scale=_WH_TO_KWH),
         SignalSpec(Signal.HP_HEAT_HEATING_KWH, "kWh", SignalKind.CUMULATIVE,
                    "Heat delivered for space heating", default_quality=Quality.MANUFACTURER_ESTIMATED,
                    required_for_thermal_model=True,
-                   hints=("arotherm_pro_heat_generated_heating",), device_class="energy", unit_scale=_WH_TO_KWH),
+                   hints=("arotherm_pro_heat_generated_heating", "heat_generated_heating"), exclude=_NOT_OUTDOOR_UNIT, device_class="energy", unit_scale=_WH_TO_KWH),
         SignalSpec(Signal.HP_HEAT_DHW_KWH, "kWh", SignalKind.CUMULATIVE,
                    "Heat delivered for hot water", default_quality=Quality.MANUFACTURER_ESTIMATED,
-                   hints=("arotherm_pro_heat_generated_domestic_hot_water",), device_class="energy",
+                   hints=("arotherm_pro_heat_generated_domestic_hot_water", "heat_generated_domestic_hot_water"), exclude=_NOT_OUTDOOR_UNIT, device_class="energy",
                    unit_scale=_WH_TO_KWH),
         SignalSpec(Signal.HP_ENV_HEATING_KWH, "kWh", SignalKind.CUMULATIVE,
                    "Environmental energy harvested for heating", default_quality=Quality.MANUFACTURER_ESTIMATED,
-                   hints=("arotherm_pro_earned_environment_energy_heating",), device_class="energy",
+                   hints=("arotherm_pro_earned_environment_energy_heating", "earned_environment_energy_heating"), exclude=_NOT_OUTDOOR_UNIT, device_class="energy",
                    unit_scale=_WH_TO_KWH),
         SignalSpec(Signal.HP_ENV_DHW_KWH, "kWh", SignalKind.CUMULATIVE,
                    "Environmental energy harvested for hot water", default_quality=Quality.MANUFACTURER_ESTIMATED,
-                   hints=("arotherm_pro_earned_environment_energy_domestic_hot_water",), device_class="energy",
+                   hints=("arotherm_pro_earned_environment_energy_domestic_hot_water", "earned_environment_energy_domestic_hot_water"), exclude=_NOT_OUTDOOR_UNIT, device_class="energy",
                    unit_scale=_WH_TO_KWH),
         SignalSpec(Signal.AUX_ELEC_HEATING_KWH, "kWh", SignalKind.CUMULATIVE,
                    "Backup/immersion electricity for heating", default_quality=Quality.MANUFACTURER_ESTIMATED,

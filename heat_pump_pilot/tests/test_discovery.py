@@ -69,3 +69,52 @@ def test_mapping_applies_unit_scaling(pilot_states):
     st = next(s for s in pilot_states if s.entity_id.endswith("import_current_rate"))
     meas = measurement_from_state(mapping[Signal.IMPORT_RATE_NOW], st, now)
     assert abs(meas.value - 6.6) < 1e-9  # GBP/kWh -> p/kWh
+
+
+def _rename(states, old: str, new: str):
+    """The pilot install with its product name swapped, as another Vaillant model reports it."""
+    from dataclasses import replace
+    return [replace(s, entity_id=s.entity_id.replace(old, new)) for s in states]
+
+
+def test_discovery_is_not_tied_to_the_arotherm_pro_name(pilot_states):
+    states = _rename(pilot_states, "arotherm_pro", "arotherm_plus")
+    report = discover_capabilities(states)
+    assert report.missing_for_thermal_model() == []
+    assert _cap(report, Signal.HP_ELEC_HEATING_KWH).source_ref.endswith("arotherm_plus_consumed_electrical_energy_heating")
+    assert _cap(report, Signal.HP_HEAT_HEATING_KWH).source_ref.endswith("arotherm_plus_heat_generated_heating")
+    assert _cap(report, Signal.HP_HEAT_DHW_KWH).source_ref.endswith("arotherm_plus_heat_generated_domestic_hot_water")
+    assert _cap(report, Signal.HP_ENV_HEATING_KWH).source_ref.endswith("arotherm_plus_earned_environment_energy_heating")
+    assert _cap(report, Signal.HP_ELECTRICAL_POWER).source_ref.endswith("arotherm_plus_current_power")
+    # the indoor unit's counters are the backup heater, never the heat pump
+    assert _cap(report, Signal.AUX_ELEC_HEATING_KWH).source_ref.endswith("vwz_ai_consumed_electrical_energy_heating")
+
+
+def test_indoor_unit_is_never_taken_for_the_heat_pump(pilot_states):
+    states = [s for s in _rename(pilot_states, "arotherm_pro", "arotherm_plus") if "arotherm_plus" not in s.entity_id]
+    report = discover_capabilities(states)
+    assert _cap(report, Signal.HP_ELEC_HEATING_KWH).status == "unavailable"
+    assert _cap(report, Signal.HP_ELECTRICAL_POWER).status == "unavailable"
+
+
+def test_generic_current_power_only_counts_for_vaillant_entities(pilot_states):
+    from dataclasses import replace
+    states = [s for s in pilot_states if "current_power" not in s.entity_id]
+    states.append(replace(states[0], entity_id="sensor.garage_freezer_current_power", state="80",
+                          attributes={"unit_of_measurement": "W", "device_class": "power"}, platform="tplink"))
+    report = discover_capabilities(states)
+    assert _cap(report, Signal.HP_ELECTRICAL_POWER).status == "unavailable"
+
+
+def test_manual_candidates_offer_unrecognised_entities(pilot_states):
+    from dataclasses import replace
+    from heat_pump_pilot.integrations.homeassistant.discovery import manual_candidates
+    states = _rename(pilot_states, "arotherm_pro_consumed_electrical_energy_heating", "my_heat_pump_electricity")
+    states.append(replace(states[0], entity_id="sensor.some_text_sensor", state="hello", attributes={}))
+    cands = manual_candidates(states)
+    ids = [c[0] for c in cands[Signal.HP_ELEC_HEATING_KWH]]
+    assert any(i.endswith("my_heat_pump_electricity") for i in ids)  # offered even though the name is unknown
+    assert "sensor.some_text_sensor" not in ids  # not an energy counter
+    temps = [c[0] for c in cands[Signal.INDOOR_TEMPERATURE]]
+    assert temps[0].endswith("zone_1_circuit_0_current_temperature")  # discovery's pick still comes first
+    assert all("consumed_electrical_energy" not in t for t in temps)

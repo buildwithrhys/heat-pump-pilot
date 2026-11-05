@@ -29,7 +29,7 @@ from ...domain import (
 )
 from ..base import ProviderHealth
 from .client import HAClient, HAState
-from .discovery import discover_capabilities, propose_mappings
+from .discovery import discover_capabilities, manual_candidates
 
 
 @dataclass
@@ -115,8 +115,7 @@ class HATelemetryProvider:
         entries = await self.client.config_entries()
         report = discover_capabilities(states, entries)
         self.last_states = {s.entity_id: s for s in states}
-        self.last_candidates = {sig.value: [(st.entity_id, round(sc, 2), note) for st, sc, note in cands[:6]]
-                                for sig, cands in propose_mappings(states).items()}
+        self.last_candidates = {sig.value: rows for sig, rows in manual_candidates(states).items()}
         report = apply_overrides(report, self.overrides or {}, self.last_states)
         self.mapping = mapping_from_report(report)
         return report

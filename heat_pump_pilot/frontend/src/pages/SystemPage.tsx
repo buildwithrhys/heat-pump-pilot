@@ -64,7 +64,7 @@ function MappingRow({ x, map, editable, onChange }: { x: SystemHealth["signals"]
           <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <select value={choice} onChange={(e) => setChoice(e.target.value)} style={{ height: 32, fontSize: 12 }}>
               <option value="">(none)</option>
-              {(map?.candidates ?? []).map(([eid, score, note]) => <option key={eid} value={eid}>{eid} · {Math.round(score * 100)}% {note}</option>)}
+              {(map?.candidates ?? []).map(([eid, score, note]) => <option key={eid} value={eid}>{eid} · {score > 0 ? `${Math.round(score * 100)}% ${note}` : "right type of reading, name not recognised"}</option>)}
               {x.source && !(map?.candidates ?? []).some(([eid]) => eid === x.source) ? <option value={x.source}>{x.source}</option> : null}
             </select>
             <button type="button" className="chip primary" style={{ height: 32 }} disabled={busy} onClick={() => save(choice || null)}>Use</button>
