@@ -51,7 +51,7 @@ export const GLOSSARY: Record<string, string> = {
   status_unavailable: "No Home Assistant entity matched this signal. Choose one with Change if you have it.",
   events: "Info is normal operation, warning means a gap or fallback, error means a data provider failed on that cycle.",
   slope: "How much the efficiency changes for each 1 °C change in outdoor temperature.",
-  balance_check: "A heat pump's own figures must add up: heat delivered equals electricity used plus heat taken from the outside air. Days where they differ by more than 10% usually mean some readings arrived late or were lost, so Heat Pump Pilot leaves them out of efficiency and heat figures instead of showing a wrong number.",
+  balance_check: "A heat pump's own figures must add up: heat delivered equals electricity used plus heat taken from the outside air. Days where they differ by more than 10%, or where heat is reported with no electricity used, mean some readings arrived late, were lost or were filed under the wrong use, so Heat Pump Pilot leaves them out of efficiency and heat figures instead of showing a wrong number.",
   no_data_day: "Heat Pump Pilot has no readings for this day, usually because it was not installed yet. It is left out of totals and averages.",
   price_coverage: "The share of your electricity for which Heat Pump Pilot has the actual half-hourly price you paid. Prices are only available from when Heat Pump Pilot was installed. Every tariff is compared on exactly this share.",
   reconciliation: "Your tariff's standard rates replayed on the same half-hours, compared with what you actually paid. A difference shows how much the standard rates miss, usually extra cheap Intelligent Octopus slots, and how far to trust the other replays.",

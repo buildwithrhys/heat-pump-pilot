@@ -51,3 +51,11 @@ def test_without_meter_standby_is_assumed_and_labelled():
     first = by_slot[datetime(2026, 10, 24, 0, 0, tzinfo=UTC)]
     assert first["hp_standby"].kwh > 0 and "assumed_standby_no_meter" in first["hp_standby"].notes
     assert reconcile(by_slot)["reconciled"]
+
+
+def test_heat_with_no_electricity_is_inconsistent_not_idle():
+    from heat_pump_pilot.analytics import energy_balance
+    b = energy_balance(0.0, 12.5, 3.8)  # myVAILLANT on an aroTHERM plus: hot water heat, no hot water electricity
+    assert b["status"] == "inconsistent" and b["reason"] == "heat_without_electricity" and b["cop"] is None
+    assert energy_balance(0.0, 0.2, 0.1)["status"] == "idle"  # rounding noise is still idle
+    assert energy_balance(0.1, 0.0, None)["status"] == "idle"

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Heat reported with no electricity is flagged, not shown.** A day where the heat pump reports heat delivered but no electricity used for it (seen on an aroTHERM plus: 10 to 25 kWh a day of hot water heat with 0 kWh of hot water electricity) was treated as "idle", so the Overview's energy diagram showed it as hot water. It now counts as figures that do not add up: left out of efficiency, tagged on Energy costs, and explained in place of the diagram.
 - **Sensors that are briefly unavailable when the add-on starts are no longer dropped.** Discovery runs at start-up, and an entity that was "unknown" or "unavailable" at that moment (myVAILLANT's energy sensors often are for a while) was left out completely: no history and no live readings until the next restart. A clear name match now stays mapped, its history is imported, and live readings resume when the entity comes back.
 - **A sensor with no history gets the full history import on the next start**, not just the usual two-day top-up.
 - **Cosy, Go and other time-of-use tariffs show their real night prices on the Forecast tab.** Every tariff was given Intelligent Octopus Go's guaranteed cheap window (23:30 to 05:30), so on Cosy the standard-rate hours from 00:00 to 04:00 showed as cheap, and the rule-based plan treated them as cheap too. Only Intelligent Octopus Go keeps that window now; other tariffs use their published rates, with the cheapest rate shown as cheap hours. Beyond the prices Octopus has published, the same hours as the latest published day are assumed (shown faded).

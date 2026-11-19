@@ -26,11 +26,13 @@ export function EnergyFlow({ costs, title, days = 1 }: { costs: Costs; title: st
   const onsite = imp > 0 ? Math.max(hpElec - imp, 0) : 0;
   const freeAir = envSh + envDhw;
 
-  if (hpElec < 0.05) return <p className="muted">No heat pump energy recorded for this period yet.</p>;
   const sb = costs.space_heating.balance;
-  if (sb && sb.status === "inconsistent") {
-    return <p className="note warn">The heat pump's figures for this period do not add up yet: heat delivered should equal electricity used plus heat from the outside air, and they differ by more than 10%. This usually means hourly figures arrived late or were lost. The diagram returns once a day's figures add up.<Term k="balance_check" /></p>;
+  const hb = costs.hot_water.balance;
+  const badUse = sb && sb.status === "inconsistent" ? "space heating" : hb && hb.status === "inconsistent" ? "hot water" : null;
+  if (badUse) {
+    return <p className="note warn">The heat pump's {badUse} figures for this period do not add up: heat delivered should equal electricity used plus heat from the outside air{badUse === "hot water" && dhwElec < 0.2 && dhwHeat >= 0.5 ? `, but Vaillant reports ${kwh(dhwHeat)} kWh of hot water heat with no electricity used for hot water` : ", and they differ by more than 10%"}. These are Vaillant's own figures, so they are left out rather than shown wrongly. The diagram returns once a day's figures add up.<Term k="balance_check" /></p>;
   }
+  if (hpElec < 0.05) return <p className="muted">No heat pump energy recorded for this period yet.</p>;
   const limit = 200 * Math.max(days, 1);
   const checks: [string, number][] = [["Electricity to the heat pump", hpElec], ["Free heat from outside air", freeAir], ["Space heating", shHeat], ["Hot water", dhwHeat], ["Standby and backup", other]];
   const bad = checks.find(([, v]) => v > limit || v < -0.05);
