@@ -51,3 +51,21 @@ def test_backfill_fills_only_missing_half_hours(tmp_path):
         rows = {as_utc(r.start): r.rate_p_per_kwh for r in repo.rates_for(s, CODE, now - timedelta(days=2), now)}
     assert len(rows) == 2 * 48 and rows[seen] == 12.6  # Home Assistant's rate is kept
     assert asyncio.run(p.backfill_rates(2)) == 0  # nothing left to fill
+
+
+def test_octopus_request_times_are_url_safe():
+    """An unencoded '+00:00' reads as a space on the server, and Octopus answers 400."""
+    import httpx
+    from datetime import datetime, timezone
+    from heat_pump_pilot.pricing.octopus_api import OctopusAPI
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"results": [], "next": None})
+
+    api = OctopusAPI(transport=httpx.MockTransport(handler))
+    t = datetime(2026, 11, 17, 21, 0, tzinfo=timezone.utc)
+    asyncio.run(api.unit_rates("COSY-22-12-08", "C", t - timedelta(days=60), t))
+    assert "period_from=2026-09-18T21:00:00Z" in seen[0] and "+" not in seen[0]

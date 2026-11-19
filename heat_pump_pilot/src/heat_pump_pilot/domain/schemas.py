@@ -151,6 +151,9 @@ class DiscoveredCapability(BaseModel):
     confidence: float = Field(ge=0, le=1)
     notes: str = ""
     alternatives: list[str] = Field(default_factory=list)
+    # A good match whose entity is only temporarily unavailable or unknown: still mapped, so its
+    # history is imported and live readings resume on their own when the entity comes back.
+    mapped_while_unavailable: bool = False
 
 
 class CapabilityReport(BaseModel):

@@ -168,6 +168,9 @@ def discover_capabilities(
             continue
         best, conf, note = cands[0]
         status = "available" if (best.is_live and conf >= 0.5) else "degraded"
+        # _score takes 0.5 off an entity that is not live. A strong name match (0.8 or more before that
+        # penalty) that is merely unavailable right now stays mapped rather than dropped until a restart.
+        good_if_live = not best.is_live and conf + 0.5 >= 0.8
         caps.append(
             DiscoveredCapability(
                 signal=signal,
@@ -178,6 +181,7 @@ def discover_capabilities(
                 confidence=round(conf, 2),
                 notes=note,
                 alternatives=[c[0].entity_id for c in cands[1:4]],
+                mapped_while_unavailable=good_if_live,
             )
         )
 

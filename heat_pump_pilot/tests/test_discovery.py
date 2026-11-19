@@ -118,3 +118,24 @@ def test_manual_candidates_offer_unrecognised_entities(pilot_states):
     temps = [c[0] for c in cands[Signal.INDOOR_TEMPERATURE]]
     assert temps[0].endswith("zone_1_circuit_0_current_temperature")  # discovery's pick still comes first
     assert all("consumed_electrical_energy" not in t for t in temps)
+
+
+def test_counter_unavailable_at_start_stays_mapped(pilot_states):
+    """myVAILLANT's energy sensors can be unknown for a while; they must not be dropped until a restart."""
+    from dataclasses import replace
+    states = [replace(s, state="unknown") if "consumed_electrical_energy_heating" in s.entity_id else s for s in pilot_states]
+    report = discover_capabilities(states)
+    cap = _cap(report, Signal.HP_ELEC_HEATING_KWH)
+    assert cap.status == "degraded" and cap.mapped_while_unavailable
+    mapped = {m.signal: m for m in mapping_from_report(report)}
+    assert mapped[Signal.HP_ELEC_HEATING_KWH].entity_id.endswith("arotherm_pro_consumed_electrical_energy_heating")
+    assert mapped[Signal.HP_ELEC_HEATING_KWH].unit_scale == 0.001  # Wh, from the entity's unit
+    assert Signal.AUX_ELEC_HEATING_KWH in mapped  # unaffected
+
+
+def test_weak_match_that_is_unavailable_is_not_mapped():
+    from heat_pump_pilot.integrations.homeassistant.client import HAState
+    weak = HAState("sensor.something_hp_power_x", "unavailable", {"unit_of_measurement": "W", "device_class": "power"})
+    report = discover_capabilities([weak])
+    cap = _cap(report, Signal.HP_ELECTRICAL_POWER)
+    assert cap.status == "degraded" and not cap.mapped_while_unavailable

@@ -146,6 +146,12 @@ class Platform:
                     extra.pop("force_full_backfill", None)
                     prop.extra = extra
                 earliest = s.query(m.SensorMeasurement.ts).filter_by(property_id=self.property_id).order_by(m.SensorMeasurement.ts).first()
+                # a sensor mapped since the last start (or one that was unavailable then) has no history yet
+                mapped = {ms.signal.value for ms in getattr(self.telemetry, "mapping", [])}
+                have = {r[0] for r in s.query(m.SensorMeasurement.signal).filter_by(property_id=self.property_id).distinct()}
+                if mapped - have:
+                    log.info("no history yet for %s; fetching the full %d days", ", ".join(sorted(mapped - have)), self.settings.backfill_days)
+                    force = True
             days = self.settings.backfill_days if force else (self.settings.backfill_days if earliest is None or (self.clock.now() - as_utc(earliest[0])) < timedelta(days=self.settings.backfill_days - 2) else 2)
         if days:
             await self.backfill(days)

@@ -45,7 +45,7 @@ def mapping_from_report(report: CapabilityReport) -> list[MappedSignal]:
     """Turn a capability report into a concrete mapping (available signals only)."""
     out = []
     for cap in report.capabilities:
-        if cap.status != "available" or not cap.source_ref:
+        if not cap.source_ref or not (cap.status == "available" or cap.mapped_while_unavailable):
             continue
         spec = SIGNAL_CATALOGUE[cap.signal]
         scale = spec.unit_scale.get(cap.unit or "", 1.0) if spec.unit_scale else 1.0
