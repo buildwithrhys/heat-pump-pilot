@@ -85,3 +85,39 @@ def test_standing_charge_is_a_whole_day_across_clock_change():
     # Half a normal day still pays the whole day: the standing charge is never pro-rated
     s2 = datetime(2026, 10, 24, tzinfo=LONDON).astimezone(UTC)
     assert abs(standing_charge_for_period(charges, s2, s2 + timedelta(hours=12)) - 54.3619) < 1e-6
+
+
+def _cosy_rates(day: date, tariff="E-1R-COSY-22-12-08-A") -> list[RateInterval]:
+    """Cosy: cheap 04-07, 13-16, 22-24; peak 16-19; standard otherwise (including 00:00-04:00)."""
+    out = []
+    for s, e in slots_in_local_day(day):
+        h = s.astimezone(LONDON).hour
+        rate = 12.6 if (4 <= h < 7 or 13 <= h < 16 or h >= 22) else 36.9 if 16 <= h < 19 else 25.2
+        out.append(RateInterval(start=s, end=e, rate_p_per_kwh=rate, tariff_code=tariff, provenance=Provenance.OCTOPUS_HA))
+    return out
+
+
+def test_cosy_night_is_priced_from_its_rates_not_the_iog_window():
+    from heat_pump_pilot.pricing import tariff_family
+    day = date(2026, 11, 17)
+    code = "E-1R-COSY-22-12-08-A"
+    assert tariff_family(code) == "time_of_use" and tariff_family("E-1R-INTELLI-VAR-24-10-29-K") == "intelligent_go"
+    book = build_rate_book(_cosy_rates(day), code)
+    t0 = datetime(2026, 11, 17, 0, 0, tzinfo=UTC)  # GMT, so local == UTC
+    slots = {s.start.astimezone(LONDON).hour * 60 + s.start.astimezone(LONDON).minute: s
+             for s in classify_slots(t0, t0 + timedelta(days=1), book, [], family=tariff_family(code))}
+    assert slots[0].rate_p_per_kwh == 25.2 and slots[0].price_class == PriceClass.PEAK  # 00:00 is standard on Cosy
+    assert slots[3 * 60 + 30].price_class == PriceClass.PEAK
+    assert slots[4 * 60].rate_p_per_kwh == 12.6 and slots[4 * 60].price_class == PriceClass.GUARANTEED_OFF_PEAK
+    assert slots[23 * 60 + 30].price_class == PriceClass.GUARANTEED_OFF_PEAK
+    assert slots[17 * 60].rate_p_per_kwh == 36.9 and not slots[17 * 60].assumed
+
+
+def test_cosy_beyond_published_rates_repeats_the_latest_day():
+    from heat_pump_pilot.pricing import tariff_family
+    code = "E-1R-COSY-22-12-08-A"
+    book = build_rate_book(_cosy_rates(date(2026, 11, 17)), code)
+    t1 = datetime(2026, 11, 18, 0, 0, tzinfo=UTC)
+    slots = {s.start.hour: s for s in classify_slots(t1, t1 + timedelta(days=1), book, [], family=tariff_family(code)) if s.start.minute == 0}
+    assert slots[1].rate_p_per_kwh == 25.2 and slots[1].assumed
+    assert slots[5].rate_p_per_kwh == 12.6 and slots[5].price_class == PriceClass.GUARANTEED_OFF_PEAK and slots[5].assumed

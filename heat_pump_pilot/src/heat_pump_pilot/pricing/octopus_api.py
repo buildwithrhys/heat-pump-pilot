@@ -20,6 +20,10 @@ BASE = "https://api.octopus.energy/v1"
 PRODUCT_CODES = {"AGILE": "AGILE-24-10-01", "INTELLI-VAR": "INTELLI-VAR-22-10-14", "GO-VAR": "GO-VAR-22-10-14", "COSY": "COSY-22-12-08", "FLEX": "VAR-22-11-01"}
 
 
+def _z(t: datetime) -> str:
+    return t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 class OctopusAPI:
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None, timeout: float = 20.0):
         self._http = httpx.AsyncClient(base_url=BASE, timeout=timeout, transport=transport)
@@ -51,7 +55,8 @@ class OctopusAPI:
 
     async def unit_rates(self, product_code: str, region: str, start: datetime, end: datetime, tariff_code: str | None = None) -> list[RateInterval]:
         tariff = tariff_code or f"E-1R-{product_code}-{region}"
-        url: str | None = f"/products/{product_code}/electricity-tariffs/{tariff}/standard-unit-rates/?period_from={start.astimezone(timezone.utc).isoformat()}&period_to={end.astimezone(timezone.utc).isoformat()}&page_size=1500"
+        # "Z" rather than "+00:00": an unencoded "+" in a query string reads as a space, and Octopus answers 400
+        url: str | None = f"/products/{product_code}/electricity-tariffs/{tariff}/standard-unit-rates/?period_from={_z(start)}&period_to={_z(end)}&page_size=1500"
         out: list[RateInterval] = []
         while url:
             r = await self._http.get(url)

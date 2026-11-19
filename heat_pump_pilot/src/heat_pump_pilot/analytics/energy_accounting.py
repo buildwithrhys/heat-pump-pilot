@@ -236,6 +236,11 @@ def energy_balance(elec_kwh: float, heat_kwh: float, env_kwh: float | None, tole
     ``cop`` is set only when the status is ok. A COP below 1 is never reported.
     """
     if elec_kwh < 0.2:
+        if heat_kwh >= 0.5:
+            # heat delivered with no electricity to make it: the figures cannot be right (seen on an
+            # aroTHERM plus where myVAILLANT reported 10-25 kWh a day of hot water heat and 0 kWh of electricity)
+            return {"status": "inconsistent", "cop": None, "elec_kwh": elec_kwh, "heat_kwh": heat_kwh, "env_kwh": env_kwh,
+                    "mismatch_pct": 100.0, "reason": "heat_without_electricity"}
         return {"status": "idle", "cop": None, "elec_kwh": elec_kwh, "heat_kwh": heat_kwh, "env_kwh": env_kwh}
     cop = heat_kwh / elec_kwh if elec_kwh else None
     if env_kwh is not None and heat_kwh > 0:

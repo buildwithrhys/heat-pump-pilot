@@ -64,7 +64,7 @@ function MappingRow({ x, map, editable, onChange }: { x: SystemHealth["signals"]
           <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <select value={choice} onChange={(e) => setChoice(e.target.value)} style={{ height: 32, fontSize: 12 }}>
               <option value="">(none)</option>
-              {(map?.candidates ?? []).map(([eid, score, note]) => <option key={eid} value={eid}>{eid} · {Math.round(score * 100)}% {note}</option>)}
+              {(map?.candidates ?? []).map(([eid, score, note]) => <option key={eid} value={eid}>{eid} · {score > 0 ? `${Math.round(score * 100)}% ${note}` : "right type of reading, name not recognised"}</option>)}
               {x.source && !(map?.candidates ?? []).some(([eid]) => eid === x.source) ? <option value={x.source}>{x.source}</option> : null}
             </select>
             <button type="button" className="chip primary" style={{ height: 32 }} disabled={busy} onClick={() => save(choice || null)}>Use</button>
@@ -138,7 +138,7 @@ export default function SystemPage() {
         <div className="tablewrap"><table>
           <thead><tr><th>Provider</th><th>Status</th><th>Last success</th><th>Error</th></tr></thead>
           <tbody>{s.providers.map((p) => (
-            <tr key={p.name}><td>{p.name}</td><td><span className={`tag ${p.ok ? "measured" : "bad"}`}>{p.ok ? "ok" : "failed"}</span></td><td>{p.last_success_at ? new Date(p.last_success_at).toLocaleString("en-GB") : "–"}</td><td className="muted">{p.last_error ?? ""}</td></tr>
+            <tr key={p.name}><td>{p.name}{p.details?.entity_id ? <div className="muted" style={{ fontSize: 12 }}>reading {p.details.entity_id}</div> : null}</td><td><span className={`tag ${p.ok ? "measured" : "bad"}`}>{p.ok ? "ok" : "failed"}</span></td><td>{p.last_success_at ? new Date(p.last_success_at).toLocaleString("en-GB") : "–"}</td><td className="muted">{p.last_error ?? ""}</td></tr>
           ))}</tbody>
         </table></div>
       </div>

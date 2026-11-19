@@ -106,7 +106,9 @@ export default function ForecastPage() {
         </>
       )}
       <div className="note">
-        The charts below are the inputs behind the plan: prices by certainty, weather and solar. Planned Intelligent Octopus dispatches are shown but never assumed to qualify until they start.
+        {t.tariff_code?.includes("INTELLI")
+          ? "The charts below are the inputs behind the plan: prices by certainty, weather and solar. Planned Intelligent Octopus dispatches are shown but never assumed to qualify until they start."
+          : "The charts below are the inputs behind the plan: prices, weather and solar. Faded price bars are hours Octopus has not published yet; they assume the same prices as the latest published day."}
       </div>
       <div className="chart">
         <h4>Electricity price per kWh, next 48 hours<Term text={`Your tariff: ${t.tariff_code}. Prices include VAT.`} /></h4>

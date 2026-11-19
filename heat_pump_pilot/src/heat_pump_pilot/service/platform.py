@@ -23,7 +23,7 @@ from ..domain import SIGNAL_CATALOGUE, CapabilityReport, Measurement, Provenance
 from ..integrations.base import ProviderHealth
 from ..model import DESIGN_INDOOR_C, COPModel, design_outdoor_c, fit_cop_model, fit_rc_model, prior_cop_model, survey_to_coefficient
 from ..optimiser import MPCInputs, build_mpc_plan, build_shadow_plan
-from ..pricing import RATES_AS_OF, REGION_NAMES, PriceClass, planning_prices, price_actual, reconcile_template, SlotPrice, build_rate_book, classify_slots, load_templates, replay, replay_with_book, scenario_intervals, standing_charge_for_period, standing_charge_per_day
+from ..pricing import RATES_AS_OF, REGION_NAMES, PriceClass, planning_prices, price_actual, reconcile_template, SlotPrice, build_rate_book, classify_slots, load_templates, replay, replay_with_book, scenario_intervals, standing_charge_for_period, standing_charge_per_day, tariff_family
 from ..timeutils import LONDON, local_day_bounds, now_utc
 from . import repository as repo
 
@@ -109,13 +109,20 @@ class Platform:
         with session_scope(self.settings.database_url) as s:
             ov = repo.mapping_overrides(s, self.property_id)
             if hasattr(self.telemetry, "set_overrides"):
-                self.telemetry.set_overrides({k: {"source_ref": r.source_ref, "unit_scale": r.unit_scale} for k, r in ov.items()})
+                self.telemetry.set_overrides({k: {"source_ref": r.source_ref, "unit_scale": r.unit_scale, "quality": r.quality} for k, r in ov.items()})
         self.capability_report = await self.telemetry.discover()
         if self.settings_store is not None and not self.settings.control_climate_entity:
             suggested = self.climate_entities().get("suggested")
             if suggested:
                 self.settings_store.update({"control_climate_entity": suggested}, self.settings)
                 log.info("climate entity preselected: %s (control stays off until allowed)", suggested)
+        # Same for the hot water cylinder, but only while control is off: with control already on, a
+        # newly chosen entity would start being adjusted without the person having picked it.
+        if self.settings_store is not None and not self.settings.control_dhw_entity and not self.settings.control_enabled:
+            heater = self.climate_entities().get("suggested_water_heater")
+            if heater:
+                self.settings_store.update({"control_dhw_entity": heater}, self.settings)
+                log.info("hot water entity preselected: %s (control stays off until allowed)", heater)
         with session_scope(self.settings.database_url) as s:
             for cap in self.capability_report.capabilities:
                 if cap.status != "available":
@@ -139,10 +146,50 @@ class Platform:
                     extra.pop("force_full_backfill", None)
                     prop.extra = extra
                 earliest = s.query(m.SensorMeasurement.ts).filter_by(property_id=self.property_id).order_by(m.SensorMeasurement.ts).first()
+                # a sensor mapped since the last start (or one that was unavailable then) has no history yet
+                mapped = {ms.signal.value for ms in getattr(self.telemetry, "mapping", [])}
+                have = {r[0] for r in s.query(m.SensorMeasurement.signal).filter_by(property_id=self.property_id).distinct()}
+                if mapped - have:
+                    log.info("no history yet for %s; fetching the full %d days", ", ".join(sorted(mapped - have)), self.settings.backfill_days)
+                    force = True
             days = self.settings.backfill_days if force else (self.settings.backfill_days if earliest is None or (self.clock.now() - as_utc(earliest[0])) < timedelta(days=self.settings.backfill_days - 2) else 2)
         if days:
             await self.backfill(days)
         await self.poll_once()
+        if self.settings.data_mode == DataMode.HOME_ASSISTANT:
+            await self.backfill_rates(self.settings.backfill_days)
+
+    async def backfill_rates(self, days: int) -> int:
+        """Past unit rates for the current import tariff from Octopus's public API.
+
+        Home Assistant's Octopus integration only holds yesterday, today and tomorrow, so without
+        this the history fetched on first start has energy but no prices. Only half-hours with no
+        stored rate are filled; rates seen through Home Assistant (including Intelligent Octopus
+        dispatch adjustments) are never overwritten. Agile is included: its past prices are public too.
+        """
+        code = self.last_poll.get("tariff_code")
+        product = _product_from_tariff(code)
+        if self.octopus_api is None or not product:
+            return 0
+        from ..pricing.octopus_api import expand_to_half_hours
+
+        end = self.clock.now().replace(minute=0, second=0, microsecond=0)
+        start = end - timedelta(days=days)
+        try:
+            fetched = await self.octopus_api.unit_rates(product, code.rsplit("-", 1)[-1], start, end, tariff_code=code)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("rate history from Octopus failed: %s", exc)
+            with session_scope(self.settings.database_url) as s:
+                repo.log_quality_event(s, self.property_id, "warning", "octopus_api", f"rate history unavailable: {exc}")
+            return 0
+        with session_scope(self.settings.database_url) as s:
+            have = {as_utc(r.start) for r in repo.rates_for(s, code, start, end)}
+            missing = [r for r in expand_to_half_hours(fetched, start, end) if as_utc(r.start) not in have]
+            n = repo.upsert_rates(s, missing, self.clock.now()) if missing else 0
+        if n:
+            log.info("filled %d past half-hour rates for %s from the Octopus API", n, code)
+        self._memo.clear()
+        return n
 
     async def backfill(self, days: int) -> int:
         end = self.clock.now()
@@ -556,11 +603,11 @@ class Platform:
                 "heating_hours": round(heat_on_hours, 1), "rated_kw": self.settings.heat_pump_rated_kw}
 
         def waiting(_detail: str = "") -> dict[str, Any]:
-            so_far = f"So far: {days_with_data} {'day' if days_with_data == 1 else 'days'}"
+            so_far = f"So far: {days_with_data} {'day' if days_with_data == 1 else 'days'} of data"
             if outdoor_seen:
                 so_far += f", outdoor temperatures {min(outdoor_seen):.0f} to {max(outdoor_seen):.0f} °C"
             reason = ("Heat Pump Pilot works out your home's heat loss from how fast it cools between heating cycles. "
-                      "It needs about 7 days with the heating running and some colder nights. " + so_far + ".")
+                      "It needs about 7 cold days to measure heat loss accurately. " + so_far + ".")
             return {**base, "status": "waiting", "reason": reason}
 
         if usable < 48:
@@ -993,7 +1040,9 @@ class Platform:
                     "current_temperature": st.attributes.get("current_temperature"), "target": st.attributes.get("temperature")}
                    for eid, st in states.items() if st.domain == "water_heater"]
         heaters.sort(key=lambda r: (r["platform"] != "mypyllant", r["entity_id"]))
-        return {"entities": rows, "suggested": suggested, "water_heaters": heaters}
+        vaillant_heaters = [r for r in heaters if r["platform"] == "mypyllant"]
+        suggested_heater = vaillant_heaters[0]["entity_id"] if len(vaillant_heaters) == 1 else (heaters[0]["entity_id"] if len(heaters) == 1 else None)
+        return {"entities": rows, "suggested": suggested, "water_heaters": heaters, "suggested_water_heater": suggested_heater}
 
     def control_preconditions(self, s, now: datetime | None = None) -> dict[str, Any]:
         """What a person should have in place before switching Allow control on."""
@@ -1043,14 +1092,18 @@ class Platform:
                 if st is None:
                     raise ValueError(f"{entity_id} is not a Home Assistant entity")
                 states[entity_id] = st
-            scale = spec.unit_scale.get(st.unit or "", 1.0) if spec.unit_scale else 1.0
-            if spec.unit_scale and st.unit and st.unit not in spec.unit_scale:
+            if spec.unit_scale and not st.unit:
+                # the factor chosen here is kept from now on, so it must not be guessed (issue #4)
+                raise ValueError(f"{entity_id} isn't reporting a unit right now (it may be unavailable), so Heat Pump Pilot "
+                                 f"can't tell how to convert it to {spec.unit}. Try again once it's reporting.")
+            if spec.unit_scale and st.unit not in spec.unit_scale:
                 raise ValueError(f"{entity_id} reports {st.unit}, which cannot be converted to {spec.unit}")
+            scale = spec.unit_scale[st.unit] if spec.unit_scale else 1.0
             repo.set_mapping_override(s, self.property_id, signal, entity_id, scale, Provenance.HOME_ASSISTANT.value, spec.default_quality.value if spec.default_quality.value != "unavailable" else "sensor")
         else:
             repo.clear_mapping_override(s, self.property_id, signal)
         ov = repo.mapping_overrides(s, self.property_id)
-        self.capability_report = self.telemetry.set_overrides({k: {"source_ref": r.source_ref, "unit_scale": r.unit_scale} for k, r in ov.items()}, self.capability_report)
+        self.capability_report = self.telemetry.set_overrides({k: {"source_ref": r.source_ref, "unit_scale": r.unit_scale, "quality": r.quality} for k, r in ov.items()}, self.capability_report)
         if not entity_id:
             # back to discovery for this signal: rerun discovery for an accurate report
             self.capability_report = await self.telemetry.discover()
@@ -1227,13 +1280,15 @@ class Platform:
         tariff_code = self.last_poll.get("tariff_code")
         if not tariff_code:
             return []
-        book = build_rate_book([_ri(r) for r in repo.rates_for(s, tariff_code, start, end)], tariff_code)
+        # a week before the window too: beyond the published prices, time-of-use tariffs repeat the same
+        # local time on the latest day that has a price, and for the early hours that day is before ``start``
+        book = build_rate_book([_ri(r) for r in repo.rates_for(s, tariff_code, start - timedelta(days=7), end)], tariff_code)
         disp = s.query(m.SmartChargingDispatch).filter(m.SmartChargingDispatch.property_id == self.property_id,
                                                         m.SmartChargingDispatch.end > start - timedelta(days=1)).all()
         from ..domain import Dispatch, DispatchKind
         dispatches = [Dispatch(kind=DispatchKind(d.kind), start=as_utc(d.start), end=as_utc(d.end), charge_kwh=d.charge_kwh,
                                source=d.source, location=d.location, observed_at=as_utc(d.observed_at)) for d in disp]
-        return classify_slots(start, end, book, dispatches, now=self.clock.now())
+        return classify_slots(start, end, book, dispatches, family=tariff_family(tariff_code), now=self.clock.now())
 
     def _latest_weather(self, s) -> list[m.WeatherForecast]:
         latest_issue = s.query(m.WeatherForecast.issued_at).filter_by(property_id=self.property_id).order_by(m.WeatherForecast.issued_at.desc()).first()
@@ -1901,6 +1956,14 @@ class Platform:
                 "signals": signals, "predbat": self.predbat_status(now), "predbat_feed": feed, "missing_for_thermal_model": [x.value for x in (self.capability_report.missing_for_thermal_model() if self.capability_report else [])],
                 "recent_events": events, "record_counts": counts, "last_poll": self.last_poll,
                 "forecast_accuracy": self.forecast_accuracy(s, now=now), "control": self.control_status()}
+
+
+
+def _product_from_tariff(code: str | None) -> str | None:
+    """``E-1R-COSY-22-12-08-A`` -> ``COSY-22-12-08``. Single-register electricity tariffs only."""
+    if not code or not code.startswith("E-1R-") or code.count("-") < 3:
+        return None
+    return code[len("E-1R-"):].rsplit("-", 1)[0]
 
 
 def _ri(r: m.TariffRateInterval) -> RateInterval:

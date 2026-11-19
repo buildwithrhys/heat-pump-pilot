@@ -23,7 +23,7 @@ from ..timeutils import LONDON, half_hour_slots, overlap_seconds, to_utc
 
 
 class PriceClass(StrEnum):
-    GUARANTEED_OFF_PEAK = "guaranteed_off_peak"  # fixed 23:30-05:30 window (IOG/Go)
+    GUARANTEED_OFF_PEAK = "guaranteed_off_peak"  # the tariff's cheap hours: IOG's fixed 23:30-05:30 window, or the cheapest published rate
     CONFIRMED_DISPATCH = "confirmed_dispatch"  # completed or started smart-charge window
     PLANNED_DISPATCH = "planned_dispatch"  # planned only; may not materialise
     PEAK = "peak"
@@ -118,6 +118,20 @@ def _in_fixed_window(when: datetime, tz: ZoneInfo = LONDON, start_min: int = 23 
     return m >= start_min or m < end_min
 
 
+def tariff_family(tariff_code: str | None) -> str:
+    """The pricing family of an Octopus tariff code such as ``E-1R-COSY-22-12-08-A``.
+
+    Only Intelligent Octopus Go has a guaranteed cheap window that overrides the published
+    rates. Every other tariff (Cosy, Go, Flux, fixed, flexible) is priced from its rates.
+    """
+    code = (tariff_code or "").upper()
+    if "INTELLI" in code:
+        return "intelligent_go"
+    if "AGILE" in code:
+        return "agile"
+    return "time_of_use"
+
+
 def classify_slots(
     start: datetime,
     end: datetime,
@@ -152,6 +166,9 @@ def classify_slots(
         if family in ("fixed", "flexible"):
             out.append(SlotPrice(s, e, r.rate_p_per_kwh if r else float("nan"), PriceClass.PEAK if r else PriceClass.UNKNOWN))
             continue
+        if family == "time_of_use":
+            out.append(_time_of_use_slot(s, e, book, r, off_peak_rate, peak_rate))
+            continue
         if _in_fixed_window(s):
             out.append(SlotPrice(s, e, off_peak_rate if off_peak_rate is not None else (r.rate_p_per_kwh if r else float("nan")), PriceClass.GUARANTEED_OFF_PEAK))
         elif any(overlap_seconds(s, e, ds, de) > 0 for ds, de in confirmed):
@@ -171,6 +188,28 @@ def classify_slots(
         else:
             out.append(SlotPrice(s, e, float("nan"), PriceClass.UNKNOWN))
     return out
+
+
+def _time_of_use_slot(s: datetime, e: datetime, book: RateBook, r: RateInterval | None,
+                      off_peak_rate: float | None, peak_rate: float | None) -> SlotPrice:
+    """Cosy, Go, Flux and similar: the published rate decides, and the cheapest rate is the cheap
+    hours. Beyond the published rates, the same local time on the latest published day is assumed,
+    because these tariffs repeat the same pattern every day."""
+    assumed = False
+    if r is None:
+        local = s.astimezone(LONDON)
+        for back in range(1, 8):
+            prev = (local - timedelta(days=back)).astimezone(timezone.utc)
+            r = book.rate_at(prev)
+            if r is not None:
+                assumed = True
+                break
+    if r is None:
+        if peak_rate is None:
+            return SlotPrice(s, e, float("nan"), PriceClass.UNKNOWN)
+        return SlotPrice(s, e, peak_rate, PriceClass.PEAK, assumed=True)
+    cheap = off_peak_rate is not None and peak_rate is not None and off_peak_rate < peak_rate and r.rate_p_per_kwh <= off_peak_rate + 1e-6
+    return SlotPrice(s, e, r.rate_p_per_kwh, PriceClass.GUARANTEED_OFF_PEAK if cheap else PriceClass.PEAK, assumed=assumed)
 
 
 def planning_prices(slots: list[SlotPrice]) -> list[SlotPrice]:

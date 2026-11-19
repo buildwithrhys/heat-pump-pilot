@@ -124,7 +124,7 @@ export default function CostsPage() {
               </tr>
             ) : (
               <tr key={d.date}>
-                <td style={{ whiteSpace: "nowrap" }}>{d.label && d.days && (d.days + (d.days_without_data ?? 0)) > 1 ? `${d.label} (${d.days} ${d.days === 1 ? "day" : "days"} with data)` : ukDate(d.date)}{d.space_heating.prices_complete === false && (d.space_heating.kwh_electric > 0) ? <span className="tag bad" title={tip("prices_incomplete")}>some prices missing</span> : null}{d.space_heating.balance && d.space_heating.balance.status !== "ok" && d.space_heating.kwh_electric > 0.2 ? <span className="tag" title={tip("balance_check")}>figures do not add up</span> : null}</td>
+                <td style={{ whiteSpace: "nowrap" }}>{d.label && d.days && (d.days + (d.days_without_data ?? 0)) > 1 ? `${d.label} (${d.days} ${d.days === 1 ? "day" : "days"} with data)` : ukDate(d.date)}{d.space_heating.prices_complete === false && (d.space_heating.kwh_electric > 0) ? <span className="tag bad" title={tip("prices_incomplete")}>some prices missing</span> : null}{(d.space_heating.balance && d.space_heating.balance.status !== "ok" && d.space_heating.kwh_electric > 0.2) || d.hot_water.balance?.status === "inconsistent" ? <span className="tag" title={tip("balance_check")}>figures do not add up</span> : null}</td>
                 <td className="num">{dash(d.space_heating.kwh_electric, (v) => num(v, 1), hasData(d))}</td>
                 <td className="num">{dash(d.space_heating.kwh_heat, (v) => num(v, 1), hasData(d))}</td>
                 <td className="num">{num(d.space_heating.cop, 2)}</td>
