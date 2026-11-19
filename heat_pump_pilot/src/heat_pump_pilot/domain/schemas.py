@@ -154,6 +154,9 @@ class DiscoveredCapability(BaseModel):
     # A good match whose entity is only temporarily unavailable or unknown: still mapped, so its
     # history is imported and live readings resume on their own when the entity comes back.
     mapped_while_unavailable: bool = False
+    # Set for a sensor the person chose: the conversion factor to use, so it is never re-derived from a
+    # unit that may be missing while the entity is unavailable (issue #4).
+    unit_scale: float | None = None
 
 
 class CapabilityReport(BaseModel):

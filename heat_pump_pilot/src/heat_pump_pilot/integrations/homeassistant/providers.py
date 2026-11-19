@@ -48,7 +48,7 @@ def mapping_from_report(report: CapabilityReport) -> list[MappedSignal]:
         if not cap.source_ref or not (cap.status == "available" or cap.mapped_while_unavailable):
             continue
         spec = SIGNAL_CATALOGUE[cap.signal]
-        scale = spec.unit_scale.get(cap.unit or "", 1.0) if spec.unit_scale else 1.0
+        scale = cap.unit_scale if cap.unit_scale is not None else (spec.unit_scale.get(cap.unit or "", 1.0) if spec.unit_scale else 1.0)
         prov = Provenance.HOME_ASSISTANT
         eid = cap.source_ref
         if "octopus" in eid:
@@ -63,8 +63,30 @@ def mapping_from_report(report: CapabilityReport) -> list[MappedSignal]:
     return out
 
 
+def override_scale(signal: Signal, saved_scale: float | None, unit: str | None) -> tuple[float, str]:
+    """The conversion factor for a sensor the person chose, and a note if it changed.
+
+    The factor saved when the sensor was chosen is used, whatever the entity looks like at start-up:
+    an unavailable entity can arrive with no unit, which once turned 342 W into 342 kW (issue #4).
+    Only a unit that is present, convertible and gives a different factor overrides it, because that
+    is positive evidence the sensor's unit was changed in Home Assistant since it was chosen.
+    """
+    spec = SIGNAL_CATALOGUE[signal]
+    saved = 1.0 if saved_scale is None else float(saved_scale)
+    if not spec.unit_scale or not unit or unit not in spec.unit_scale:
+        return saved, ""
+    live = spec.unit_scale[unit]
+    if abs(live - saved) > 1e-12:
+        return live, f"; its unit is now {unit}, so readings are converted for {unit}"
+    return saved, ""
+
+
 def apply_overrides(report: CapabilityReport, overrides: dict[str, dict[str, Any]], states: dict[str, HAState] | None = None) -> CapabilityReport:
-    """Replace discovered sources with user-confirmed ones. ``overrides`` maps signal -> {source_ref, unit}."""
+    """Replace discovered sources with user-confirmed ones.
+
+    ``overrides`` maps signal -> {source_ref, unit_scale, quality}: what was saved when the person chose
+    the sensor. The saved factor and quality are used, not re-derived from the entity's current state.
+    """
     if not overrides:
         return report
     caps = []
@@ -75,10 +97,20 @@ def apply_overrides(report: CapabilityReport, overrides: dict[str, dict[str, Any
             continue
         st = (states or {}).get(o["source_ref"])
         live = st.is_live if st else True
+        unit = st.unit if st else None
+        scale, unit_note = override_scale(cap.signal, o.get("unit_scale"), unit)
+        spec = SIGNAL_CATALOGUE[cap.signal]
+        fallback = spec.default_quality if spec.default_quality != Quality.UNAVAILABLE else Quality.SENSOR
+        try:
+            quality = Quality(o.get("quality") or fallback.value)
+        except ValueError:
+            quality = fallback
+        if quality == Quality.UNAVAILABLE:  # a chosen sensor is never "unavailable" quality; its state says whether it is live
+            quality = fallback
         # a user's choice is always mapped, even while the entity is unavailable, so it recovers on its own
-        caps.append(cap.model_copy(update={"source_ref": o["source_ref"], "unit": o.get("unit") or (st.unit if st else cap.unit),
-                                           "status": "available", "confidence": 1.0,
-                                           "notes": "chosen by you" + ("" if live else f"; state is currently {st.state}")}))
+        caps.append(cap.model_copy(update={"source_ref": o["source_ref"], "unit": unit or cap.unit, "unit_scale": scale,
+                                           "quality": quality, "status": "available", "confidence": 1.0,
+                                           "notes": "chosen by you" + unit_note + ("" if live else f"; state is currently {st.state}")}))
     return report.model_copy(update={"capabilities": caps})
 
 

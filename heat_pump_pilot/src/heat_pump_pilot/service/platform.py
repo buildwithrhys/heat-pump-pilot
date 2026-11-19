@@ -109,7 +109,7 @@ class Platform:
         with session_scope(self.settings.database_url) as s:
             ov = repo.mapping_overrides(s, self.property_id)
             if hasattr(self.telemetry, "set_overrides"):
-                self.telemetry.set_overrides({k: {"source_ref": r.source_ref, "unit_scale": r.unit_scale} for k, r in ov.items()})
+                self.telemetry.set_overrides({k: {"source_ref": r.source_ref, "unit_scale": r.unit_scale, "quality": r.quality} for k, r in ov.items()})
         self.capability_report = await self.telemetry.discover()
         if self.settings_store is not None and not self.settings.control_climate_entity:
             suggested = self.climate_entities().get("suggested")
@@ -1092,14 +1092,18 @@ class Platform:
                 if st is None:
                     raise ValueError(f"{entity_id} is not a Home Assistant entity")
                 states[entity_id] = st
-            scale = spec.unit_scale.get(st.unit or "", 1.0) if spec.unit_scale else 1.0
-            if spec.unit_scale and st.unit and st.unit not in spec.unit_scale:
+            if spec.unit_scale and not st.unit:
+                # the factor chosen here is kept from now on, so it must not be guessed (issue #4)
+                raise ValueError(f"{entity_id} isn't reporting a unit right now (it may be unavailable), so Heat Pump Pilot "
+                                 f"can't tell how to convert it to {spec.unit}. Try again once it's reporting.")
+            if spec.unit_scale and st.unit not in spec.unit_scale:
                 raise ValueError(f"{entity_id} reports {st.unit}, which cannot be converted to {spec.unit}")
+            scale = spec.unit_scale[st.unit] if spec.unit_scale else 1.0
             repo.set_mapping_override(s, self.property_id, signal, entity_id, scale, Provenance.HOME_ASSISTANT.value, spec.default_quality.value if spec.default_quality.value != "unavailable" else "sensor")
         else:
             repo.clear_mapping_override(s, self.property_id, signal)
         ov = repo.mapping_overrides(s, self.property_id)
-        self.capability_report = self.telemetry.set_overrides({k: {"source_ref": r.source_ref, "unit_scale": r.unit_scale} for k, r in ov.items()}, self.capability_report)
+        self.capability_report = self.telemetry.set_overrides({k: {"source_ref": r.source_ref, "unit_scale": r.unit_scale, "quality": r.quality} for k, r in ov.items()}, self.capability_report)
         if not entity_id:
             # back to discovery for this signal: rerun discovery for an accurate report
             self.capability_report = await self.telemetry.discover()
