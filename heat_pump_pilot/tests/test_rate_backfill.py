@@ -69,3 +69,35 @@ def test_octopus_request_times_are_url_safe():
     t = datetime(2026, 11, 17, 21, 0, tzinfo=timezone.utc)
     asyncio.run(api.unit_rates("COSY-22-12-08", "C", t - timedelta(days=60), t))
     assert "period_from=2026-09-18T21:00:00Z" in seen[0] and "+" not in seen[0]
+
+
+def test_forecast_early_hours_repeat_yesterday_even_before_the_window(tmp_path):
+    """Forecast from 09:00 Thursday: Friday 00:00-09:00 must repeat Thursday's early hours, which are
+    before the window, not fall back to the peak rate (seen on Cosy: 00-09 drawn at 43p)."""
+    from datetime import date, datetime, timezone
+    from heat_pump_pilot.pricing import PriceClass
+    from heat_pump_pilot.timeutils import LONDON, slots_in_local_day
+
+    def cosy(day):
+        out = []
+        for s, e in slots_in_local_day(day):
+            h = s.astimezone(LONDON).hour
+            rate = 12.6 if (4 <= h < 7 or 13 <= h < 16 or h >= 22) else 36.9 if 16 <= h < 19 else 25.2
+            out.append(RateInterval(start=s, end=e, rate_p_per_kwh=rate, tariff_code=CODE, provenance=Provenance.OCTOPUS_HA))
+        return out
+
+    settings = Settings(data_mode=DataMode.SIMULATED, database_url=f"sqlite:///{tmp_path / 'f.sqlite'}", sim_days=1)
+    p = build_platform(settings)
+    asyncio.run(p.bootstrap())
+    p.last_poll["tariff_code"] = CODE
+    thu = date(2026, 11, 19)
+    start = datetime(2026, 11, 19, 9, 0, tzinfo=timezone.utc)  # GMT: local == UTC
+    with session_scope(settings.database_url) as s:
+        repo.upsert_rates(s, cosy(thu), start)
+        slots = {sp.start: sp for sp in p._price_slots(s, start, start + timedelta(hours=48))}
+    fri = datetime(2026, 11, 20, tzinfo=timezone.utc)
+    assert slots[fri + timedelta(hours=1)].rate_p_per_kwh == 25.2 and slots[fri + timedelta(hours=1)].assumed
+    assert slots[fri + timedelta(hours=5)].rate_p_per_kwh == 12.6
+    assert slots[fri + timedelta(hours=5)].price_class == PriceClass.GUARANTEED_OFF_PEAK
+    assert slots[fri + timedelta(hours=8)].rate_p_per_kwh == 25.2
+    assert slots[fri + timedelta(hours=17)].rate_p_per_kwh == 36.9

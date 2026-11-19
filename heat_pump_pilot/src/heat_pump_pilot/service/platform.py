@@ -1280,7 +1280,9 @@ class Platform:
         tariff_code = self.last_poll.get("tariff_code")
         if not tariff_code:
             return []
-        book = build_rate_book([_ri(r) for r in repo.rates_for(s, tariff_code, start, end)], tariff_code)
+        # a week before the window too: beyond the published prices, time-of-use tariffs repeat the same
+        # local time on the latest day that has a price, and for the early hours that day is before ``start``
+        book = build_rate_book([_ri(r) for r in repo.rates_for(s, tariff_code, start - timedelta(days=7), end)], tariff_code)
         disp = s.query(m.SmartChargingDispatch).filter(m.SmartChargingDispatch.property_id == self.property_id,
                                                         m.SmartChargingDispatch.end > start - timedelta(days=1)).all()
         from ..domain import Dispatch, DispatchKind
