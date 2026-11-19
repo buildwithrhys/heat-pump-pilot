@@ -18,7 +18,7 @@ export const GLOSSARY: Record<string, string> = {
   fresh_telemetry: "Temperatures, pressure and power normally arrive every few minutes. Heat Pump Pilot flags one if Home Assistant has not confirmed a reading for 2 hours.",
   dispatch_confirmed: "An Intelligent Octopus charging slot that has started or finished. Electricity used in it is charged at the cheap rate.",
   dispatch_planned: "A charging slot Octopus has planned but which may still move. Heat Pump Pilot never assumes the cheap rate until the slot actually starts.",
-  guaranteed_off_peak: "The fixed cheap hours of your tariff (23:30 to 05:30 on Intelligent Octopus Go), always charged at the cheap rate.",
+  guaranteed_off_peak: "The cheap hours of your tariff, always charged at the cheap rate: 23:30 to 05:30 on Intelligent Octopus Go, or the cheapest published rate on tariffs such as Cosy and Go. Beyond the prices Octopus has published, the same hours as the latest published day are assumed.",
   variable: "Half-hourly prices set the day before, as on Agile tariffs.",
   peak: "The standard, dearer rate outside the cheap hours.",
   plain_thermostat: "The same house model run with an ordinary on/off thermostat holding the setpoint, so the saving is like for like.",

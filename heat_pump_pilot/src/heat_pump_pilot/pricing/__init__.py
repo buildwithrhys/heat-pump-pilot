@@ -9,6 +9,7 @@ from .tariff_engine import (
     planning_prices,
     standing_charge_for_period,
     standing_charge_per_day,
+    tariff_family,
 )
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     "planning_prices",
     "standing_charge_for_period",
     "standing_charge_per_day",
+    "tariff_family",
 ]
