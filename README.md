@@ -58,6 +58,8 @@ The add-on's Configuration tab holds only install-time and safety settings: data
 
 Full details are in [heat_pump_pilot/DOCS.md](heat_pump_pilot/DOCS.md).
 
+If you are having problems or need support, or have found a bug, please [submit them here](https://github.com/buildwithrhys/heat-pump-pilot/issues) while we set up a forum topic to discuss. 
+
 ## Safety
 
 One module can write to Home Assistant and it can do one thing: set the target of the single climate entity you name. It is loaded only when control is configured, runs a guard chain on every cycle, and cannot be enabled through the API. See [SAFETY.md](SAFETY.md).
